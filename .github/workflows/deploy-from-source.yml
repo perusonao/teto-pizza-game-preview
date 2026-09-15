@@ -1,0 +1,131 @@
+name: Build & deploy a source PR/branch
+
+# Manually re-buildable preview pipeline for perusonao/teto-pizza-game.
+# Pick any branch, tag or commit SHA on that repo and this publishes an
+# iPhone-testable build of it to this repo's `site/`, which the
+# `Deploy Preview to GitHub Pages` workflow then serves at
+# https://perusonao.github.io/teto-pizza-game-preview/ (that workflow
+# triggers automatically on the push this job makes to `main`).
+#
+# No secrets required: perusonao/teto-pizza-game is public, so checking
+# it out needs no token, and pushing the built output back into *this*
+# repo uses the run's own default GITHUB_TOKEN.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag or commit SHA on perusonao/teto-pizza-game to build"
+        required: true
+        default: "main"
+      pr_number:
+        description: "Source PR number this build previews (optional, shown in the on-screen PREVIEW badge)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: deploy-from-source
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source repo (perusonao/teto-pizza-game) at the requested ref
+        uses: actions/checkout@v4
+        with:
+          repository: perusonao/teto-pizza-game
+          ref: ${{ inputs.ref }}
+          path: source
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: source/package-lock.json
+
+      - name: Install source deps
+        working-directory: source
+        run: npm ci
+
+      - name: Resolve short SHA
+        id: sha
+        working-directory: source
+        run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Build with the Preview base path + badge/save-namespace env vars
+        working-directory: source
+        env:
+          VITE_PREVIEW_MODE: "1"
+          VITE_PREVIEW_PR: ${{ inputs.pr_number }}
+          VITE_PREVIEW_SHA: ${{ steps.sha.outputs.short }}
+        run: npx vite build --base=/teto-pizza-game-preview/ --outDir dist-preview
+
+      # The PWA manifest is a static public/ file the source repo's own Vite base rewrite
+      # doesn't touch -- its start_url/scope hardcode the production path, so without this
+      # a preview build would ship a manifest pointing back at /teto-pizza-game/.
+      - name: Point the manifest at the preview path
+        working-directory: source
+        run: |
+          sed -i 's#"start_url": "/teto-pizza-game/"#"start_url": "/teto-pizza-game-preview/"#' dist-preview/manifest.webmanifest
+          sed -i 's#"scope": "/teto-pizza-game/"#"scope": "/teto-pizza-game-preview/"#' dist-preview/manifest.webmanifest
+
+      - name: Keep this preview out of search engines
+        working-directory: source
+        run: sed -i 's#<meta charset="UTF-8" />#<meta charset="UTF-8" />\n    <meta name="robots" content="noindex, nofollow" />#' dist-preview/index.html
+
+      - name: Checkout this repo (teto-pizza-game-preview)
+        uses: actions/checkout@v4
+        with:
+          path: preview
+
+      - name: Replace site/ with the new build
+        run: |
+          rm -rf preview/site
+          mkdir -p preview/site
+          cp -r source/dist-preview/. preview/site/
+
+      - name: Update README with the build that's live
+        working-directory: preview
+        run: |
+          cat > README.md <<EOF
+          # teto-pizza-game preview
+
+          Deployment target for physical-device (primarily iPhone Safari)
+          verification of a branch/PR on
+          [perusonao/teto-pizza-game](https://github.com/perusonao/teto-pizza-game),
+          published at https://perusonao.github.io/teto-pizza-game-preview/
+
+          - **Source ref:** \`${{ inputs.ref }}\`
+          - **Source commit:** \`$(cd ../source && git rev-parse HEAD)\`
+          - **Source PR:** ${{ inputs.pr_number && format('#{0}', inputs.pr_number) || '(none given)' }}
+          - **Built:** $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          \`site/\` is a production (\`vite build --base=/teto-pizza-game-preview/\`)
+          build of that exact commit, with \`VITE_PREVIEW_MODE=1\` set so the app
+          shows a small on-screen PREVIEW badge (source PR + short SHA) and saves
+          progress under its own localStorage key -- separate from
+          \`perusonao.github.io/teto-pizza-game/\`'s production save, since both
+          share the same \`perusonao.github.io\` origin.
+
+          Re-run via **Actions -> Build & deploy a source PR/branch -> Run workflow**
+          with a different \`ref\`/\`pr_number\` to preview another branch or PR.
+          This repo is not connected to teto-pizza-game's production GitHub Pages,
+          \`main\` branch, or Actions in any way.
+          EOF
+
+      - name: Commit and push
+        working-directory: preview
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add site README.md
+          if git diff --cached --quiet; then
+            echo "No changes to publish."
+            exit 0
+          fi
+          git commit -m "Deploy preview: ${{ inputs.ref }} ($(cd ../source && git rev-parse --short HEAD))"
+          git push origin HEAD:main

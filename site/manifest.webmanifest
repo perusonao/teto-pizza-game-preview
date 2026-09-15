@@ -1,0 +1,22 @@
+{
+  "name": "テトのピザ屋さん",
+  "short_name": "テトのピザ屋",
+  "description": "テトと一緒にピザを作ろう。おいしいピザで、しあわせの輪を広げよう。",
+  "start_url": "/teto-pizza-game-preview/",
+  "scope": "/teto-pizza-game-preview/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#2a170d",
+  "theme_color": "#6b4226",
+  "lang": "ja",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    {
+      "src": "icons/icon-512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
