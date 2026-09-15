@@ -6,9 +6,10 @@ verification of a branch/PR on
 published at https://perusonao.github.io/teto-pizza-game-preview/
 
 - **Source ref:** `claude/phase-4a-1b-human-feel-preview-1byr1k`
-- **Source commit:** `292c152` (Phase 4A-1B Human Feel Fix 2 -- fixed 3x2
-  Ingredient Palette grid + Sauce Painting Visual/Scoring Discoverability;
-  built on PR #26's `e02425b3855625d225339fcae0eaead5699ceff3`)
+- **Source commit:** `564fd52` (Phase 4A-1B Human Feel Fix 3 -- PREPARE
+  1-screen layout, fixed Bake CTA, and a Sauce Visual rewrite (bilinear
+  interpolation, no more grid/stamp pattern); built on PR #26's
+  `e02425b3855625d225339fcae0eaead5699ceff3`)
 - **Source PR:** #26
 - **Content:** a production (`vite build --base=/teto-pizza-game-preview/`)
   build of that exact commit, with `VITE_PREVIEW_MODE=1` set so the app shows
