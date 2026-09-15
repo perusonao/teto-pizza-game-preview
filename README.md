@@ -6,7 +6,8 @@ verification of a branch/PR on
 published at https://perusonao.github.io/teto-pizza-game-preview/
 
 - **Source ref:** `claude/phase-4a-1b-human-feel-preview-1byr1k`
-- **Source commit:** `59e8477` (Phase 4A-1B Human Feel fix, built on PR #26's
+- **Source commit:** `df54072` (Phase 4A-1B Human Feel Fix 2 -- fixed 3x2
+  Ingredient Palette grid, no tray scroll; built on PR #26's
   `e02425b3855625d225339fcae0eaead5699ceff3`)
 - **Source PR:** #26
 - **Content:** a production (`vite build --base=/teto-pizza-game-preview/`)
