@@ -5,10 +5,10 @@ verification of a branch/PR on
 [perusonao/teto-pizza-game](https://github.com/perusonao/teto-pizza-game),
 published at https://perusonao.github.io/teto-pizza-game-preview/
 
-- **Source ref:** `9cdd57de4e8441fb0403e2f7cb384f51b102ec11`
-- **Source commit:** `9cdd57de4e8441fb0403e2f7cb384f51b102ec11`
-- **Source PR:** #66
-- **Built:** 2026-09-18T12:24:43Z
+- **Source ref:** `7f7107401ecd41d4e8d25b64d413a13ac4d12b3c`
+- **Source commit:** `7f7107401ecd41d4e8d25b64d413a13ac4d12b3c`
+- **Source PR:** #68
+- **Built:** 2026-09-18T13:09:34Z
 
 `site/` is a production (`vite build --base=/teto-pizza-game-preview/`)
 build of that exact commit, with `VITE_PREVIEW_MODE=1` set so the app
