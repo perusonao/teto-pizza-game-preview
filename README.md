@@ -8,7 +8,7 @@ published at https://perusonao.github.io/teto-pizza-game-preview/
 - **Source ref:** `cfd87e1a42f68072633a8cacef976a4a7df6e615`
 - **Source commit:** `cfd87e1a42f68072633a8cacef976a4a7df6e615`
 - **Source PR:** #64
-- **Built:** 2026-09-18T10:42:37Z
+- **Built:** 2026-09-18T10:45:29Z
 
 `site/` is a production (`vite build --base=/teto-pizza-game-preview/`)
 build of that exact commit, with `VITE_PREVIEW_MODE=1` set so the app
