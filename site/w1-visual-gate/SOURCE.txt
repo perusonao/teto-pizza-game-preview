@@ -1,6 +1,0 @@
-W1 Ingredient Visual Gate preview (slice 3)
-source repo: perusonao/teto-pizza-game
-source branch: claude/w1-ingredient-visual-preview-mt4uxw
-source commit: fe80e3c2ee4f0d7d3967cbe35780d819e7f842e7
-build: W1_GATE_SHA=<sha> W1_GATE_BASE=/teto-pizza-game-preview/w1-visual-gate/ npx vite build --config visual-gate/w1/vite.config.ts (manifest removed)
-save key: teto-pizza-w1-visual-gate-save-v1
