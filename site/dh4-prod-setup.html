@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="robots" content="noindex, nofollow" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>DH4-PROD HV Setup</title>
+<!--
+  Preview-only helper for perusonao/teto-pizza-game Issue #290 / PR #291 (DH4-PROD: 構成 / 特徴 at 5 / 5 Pitz), live build 2c8a38b.
+  Writes only:
+    - teto-pizza-preview-save-v1                the Preview game save (seed buttons; backed up once)
+    - teto-pizza-preview-save-v1.dh4-prod-backup  the one-time backup of that save
+  Never the production save (teto-pizza-save-v1). The Preview build's own deploy replaces site/,
+  so re-add this page after a new deploy if it is still needed.
+-->
+<style>
+  :root { --bg:#fbf4e6; --fg:#3a2a1a; --card:#fffaf0; --line:#e3d2b4; --accent:#e8662c; --night:#2f2a52; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.6 -apple-system, "Hiragino Sans", sans-serif; }
+  main { max-width:480px; margin:0 auto; padding:20px 16px 40px; }
+  h1 { font-size:20px; margin:0 0 4px; color:var(--night); }
+  p.note { font-size:13px; margin:4px 0 12px; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; margin:0 0 14px; }
+  h2 { font-size:16px; margin:0 0 8px; }
+  button, a.btn { display:block; width:100%; min-height:48px; margin:8px 0 0; border:0; border-radius:12px;
+    background:var(--accent); color:#fff; font:600 15px/1.3 inherit; padding:12px; text-align:center; text-decoration:none; }
+  button.sub, a.sub { background:#fff; color:var(--fg); border:1px solid var(--line); }
+  #status { font-size:14px; min-height:1.6em; font-weight:600; }
+  code { font-size:12px; }
+  small { display:block; font-weight:400; font-size:12px; opacity:.85; }
+</style>
+</head>
+<body>
+<main>
+  <h1>💡 DH4-PROD 構成・特徴ヒント HV Setup</h1>
+  <p class="note">
+    PR #291（構成・特徴ヒントの本番有効化・各 5 Pitz）の iPhone Human Verification 用です。
+    Preview 専用セーブ（<code>teto-pizza-preview-save-v1</code>）だけを書き換えます。本番セーブ・本番サイトには触れません。
+    いまの Preview セーブは最初の 1 回だけバックアップし、「元に戻す」で復元できます。
+  </p>
+  <p class="note">どのセーブも、開いたら「フリークッキング」→ 具材まで進む → 下の「ヒント」でシートを開きます。</p>
+  <p id="status"></p>
+
+  <section>
+    <h2>1. テスト用セーブを入れる</h2>
+    <button type="button" data-seed="main">A. 未発見レシピ（図鑑 11 種・100 Pitz）
+      <small>構成 5 → 特徴 5 → 材料 5：100 → 95 → 90 → 85 Pitz。もらいずみ・再読み込みで再課金なし。</small></button>
+    <button type="button" class="sub" data-seed="legacy">E. 材料ヒント 40 Pitz の段階（25 Pitz）
+      <small>材料は 40 Pitz で押せない／構成・特徴は 5 Pitz のまま押せる（材料の値段の段階に混ざらない）。</small></button>
+    <button type="button" class="sub" data-seed="t1a-early">B1. 特徴ヒント（パルミジャーノを先に買った）
+      <small>比較用：答えが出て 5 Pitz 減ります。</small></button>
+    <button type="button" class="sub" data-seed="t1a-late">B2. 特徴ヒント（パルミジャーノを後から買った）
+      <small>「今はまだ、大きな手がかりが見つからなかったよ（Pitzは使っていないよ）」・Pitz は減らない。</small></button>
+    <button type="button" class="sub" data-seed="short">D. Pitz 不足（4 Pitz）
+      <small>材料・構成・特徴どれも押せない・落ち着いた一文・閉じて料理を続けられる。</small></button>
+  </section>
+
+  <section>
+    <h2>2. Preview を開く</h2>
+    <a class="btn" href="./">Preview を開く</a>
+  </section>
+
+  <section>
+    <h2>元に戻す</h2>
+    <button type="button" class="sub" id="restore">バックアップした Preview セーブに戻す</button>
+  </section>
+</main>
+<script>
+(function () {
+  var KEY = "teto-pizza-preview-save-v1";
+  var BACKUP = "teto-pizza-preview-save-v1.dh4-prod-backup";
+  var NONE = "__none__";
+  var status = document.getElementById("status");
+  function say(t) { status.textContent = t; }
+  if (!(location.pathname.indexOf("/teto-pizza-game-preview/") === 0 || location.hostname === "localhost")) {
+    say("Preview（/teto-pizza-game-preview/）以外では動きません。");
+    Array.prototype.forEach.call(document.querySelectorAll("button"), function (b) { b.disabled = true; });
+    return;
+  }
+  var STARTERS = ["tomato-sauce", "mozzarella", "basil"];
+  var LADDER = [
+    ["margherita", []], ["bismarck", ["egg"]], ["breakfast-pizza", ["bacon"]], ["funghi", ["mushroom"]],
+    ["melanzane-pizza", ["eggplant"]], ["parmigiana-pizza", ["parmigiano"]], ["pepperoni", ["pepperoni"]],
+    ["salsiccia", ["sausage"]], ["meat-lovers", ["ham"]], ["bambino", ["corn"]], ["hawaiian", ["pineapple"]],
+    ["capricciosa", ["black-olive", "oregano"]]
+  ];
+  var DEX11 = [];
+  LADDER.slice(1, 12).forEach(function (s) { DEX11 = DEX11.concat(s[1]); });
+  var BASE = ["egg", "bacon", "mushroom", "eggplant"];
+
+  // ownedIngredientIds is the acquisition order (starters first): the Deduction Hint guard reads it.
+  function save(dexCount, owned, pitz, facts) {
+    var inventory = {};
+    owned.forEach(function (id) { inventory[id] = 10; });
+    return {
+      schemaVersion: 2,
+      dex: LADDER.slice(0, dexCount).map(function (s) { return { recipeId: s[0], discovered: true, bestScore: 70, bestStars: 3, timesMade: 1 }; }),
+      pitzBalance: pitz,
+      ownedIngredientIds: STARTERS.concat(owned),
+      missionBest: {},
+      inventory: inventory,
+      starterGrantClaimedRecipeIds: [],
+      unlockedForShopIngredientIds: owned.slice(),
+      discoveryHintFacts: facts || {},
+      discoveryHintPurchases: {}
+    };
+  }
+  var SEEDS = {
+    "main": [save(11, DEX11, 100), "A. 未発見レシピ（100 Pitz）"],
+    "legacy": [Object.assign(save(11, DEX11, 25), { discoveryHintPurchases: { capricciosa: 3 } }), "E. 材料 40 Pitz の段階（25 Pitz）セーブ"],
+    "t1a-early": [save(6, BASE.concat(["parmigiano", "pepperoni"]), 300), "B1. パルミジャーノを先に買ったセーブ"],
+    "t1a-late": [save(6, BASE.concat(["pepperoni", "parmigiano"]), 300), "B2. パルミジャーノを後から買ったセーブ"],
+    "short": [save(11, DEX11, 4), "D. Pitz 不足（4 Pitz）セーブ"]
+  };
+
+  function seed(kind) {
+    try {
+      if (localStorage.getItem(BACKUP) === null) {
+        var current = localStorage.getItem(KEY);
+        localStorage.setItem(BACKUP, current === null ? NONE : current);
+      }
+      localStorage.setItem(KEY, JSON.stringify(SEEDS[kind][0]));
+      say("✅ " + SEEDS[kind][1] + "を入れました。下のリンクから開いてください。");
+    } catch (e) { say("⚠️ 保存できませんでした: " + e); }
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll("[data-seed]"), function (b) {
+    b.addEventListener("click", function () { seed(b.getAttribute("data-seed")); });
+  });
+  document.getElementById("restore").addEventListener("click", function () {
+    try {
+      var b = localStorage.getItem(BACKUP);
+      if (b === null) { say("バックアップはありません（まだテスト用セーブを入れていません）。"); return; }
+      if (b === NONE) localStorage.removeItem(KEY); else localStorage.setItem(KEY, b);
+      localStorage.removeItem(BACKUP);
+      say("↩️ 元の Preview セーブに戻しました。");
+    } catch (e) { say("⚠️ 戻せませんでした: " + e); }
+  });
+})();
+</script>
+</body>
+</html>
