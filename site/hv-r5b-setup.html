@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="UTF-8" />
+<!-- LC-R5-b real-iPhone HV helper. Preview repo only; NOT part of the game or its bundle. -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="robots" content="noindex, nofollow" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="R5b HV" />
+<link rel="icon" href="data:," />
+<title>R5b HV setup</title>
+<style>
+body{margin:0;padding:calc(16px + env(safe-area-inset-top,0px)) 16px calc(24px + env(safe-area-inset-bottom,0px));font:15px/1.5 system-ui,sans-serif;background:#fff8ea;color:#4a2e0a}
+h1{font-size:18px;margin:0 0 8px}h2{font-size:15px;margin:20px 0 6px}
+button,a.btn{display:inline-block;font:16px system-ui;padding:12px 16px;min-height:44px;margin:4px 6px 4px 0;border:0;border-radius:10px;background:#f08a1e;color:#fff;text-decoration:none}
+button.sub{background:#8a6a45}
+pre,textarea{width:100%;box-sizing:border-box;font:11px ui-monospace,Menlo,monospace;background:#2a170d;color:#9f9;padding:8px;border-radius:8px;white-space:pre-wrap;word-break:break-all}
+textarea{height:140px}
+#st{background:#fff;border-radius:8px;padding:8px;font-size:13px}
+ol{padding-left:20px}
+</style></head><body>
+<h1>LC-R5-b 実機HV セットアップ</h1>
+<p>このページは HV 用の補助ページです（ゲーム本体・本番には含まれません）。Preview のセーブだけを書き換えます（本番のセーブには触れません）。</p>
+<div id="st">…</div>
+
+<h2>1. セーブを用意（全29材料・在庫9・Dexなし）</h2>
+<button id="seed">セーブを用意してゲームを開く</button>
+<button id="reset" class="sub">Previewのセーブを消す</button>
+<a class="btn sub" href="./">ゲームを開く(セーブはそのまま)</a>
+
+<h2>2. ゲームでやること</h2>
+<ol>
+<li>ホーム →「フリークッキング」→ 生地 → ソース → チーズ → 具材まで進める（具材の画面に 🧺食材庫 ボタンが出る）。</li>
+<li>🧺食材庫 → 検索欄をタップ。以降は HV 手順の A / B に従う。</li>
+</ol>
+
+<h2>3. 数値を取りたいとき（Mac の Safari Web Inspector）</h2>
+<p>iPhone を Mac に USB 接続 → Safari「開発」→ iPhone → 対象ページ → コンソールに下を貼り付け。以降 <code>__snap("ラベル")</code> で現在値を記録、最後に <code>__dump()</code> の出力をコピー。Macが無ければ動画だけで可。standalone も「開発」メニューに出ます。</p>
+<textarea id="probe" readonly>(()=>{const q=s=>document.querySelector(s),r=e=>{if(!e)return null;const b=e.getBoundingClientRect();return{t:+b.top.toFixed(1),b:+b.bottom.toFixed(1),h:+b.height.toFixed(1)}};
+const snap=l=>{const v=visualViewport,list=q('.pantry-sheet__list'),vb=v.offsetTop+v.height,lb=list&amp;&amp;list.getBoundingClientRect(),rows=new Set();
+if(lb)document.querySelectorAll('.pantry-tile').forEach(t=>{const b=t.getBoundingClientRect();if(b.top>=lb.top-.5&amp;&amp;b.bottom&lt;=Math.min(lb.bottom,vb)+.5)rows.add(Math.round(b.top))});
+return{l,innerH:innerHeight,clientH:document.documentElement.clientHeight,vvH:+v.height.toFixed(1),vvOff:+v.offsetTop.toFixed(1),vvPageTop:+v.pageTop.toFixed(1),scrollY,sheet:r(q('.pantry-sheet')),search:r(q('.pantry-sheet__search-input')),chips:r(q('.pantry-sheet__shelves')),list:r(list),fullRows:rows.size,fit:!!q('.pantry-sheet--fit'),tiles:document.querySelectorAll('.pantry-tile').length,stage:r(q('.pizza-dough')),dock:r(q('.prepare-dock')),active:document.activeElement&amp;&amp;String(document.activeElement.className)}};
+window.__hv=[];const push=l=>{window.__hv.push(snap(l))};
+['resize','scroll'].forEach(e=>visualViewport.addEventListener(e,()=>push('vv.'+e)));
+document.addEventListener('focusin',()=>push('focusin'),true);document.addEventListener('focusout',()=>push('focusout'),true);
+window.__snap=l=>{push(l);return JSON.stringify(window.__hv[window.__hv.length-1])};window.__dump=()=>JSON.stringify({ua:navigator.userAgent,standalone:navigator.standalone===true,log:window.__hv});
+return 'probe installed: __snap("label") / __dump()'})()</textarea>
+<button id="copy" class="sub">スニペットをコピー</button>
+
+<script>
+(function(){
+var KEY="teto-pizza-preview-save-v1";
+var IDS=["tomato-sauce","olive-oil","pesto","mozzarella","gorgonzola","parmigiano","fontina","basil","garlic","oregano","cherry-tomato","egg","mushroom","onion","sausage","pepperoni","anchovy","tuna","rosemary","bacon","ham","black-olive","capers","clam","corn","eggplant","fresh-tomato","pineapple","potato"];
+var inv={};IDS.forEach(function(i){inv[i]=9});
+var SAVE={schemaVersion:2,dex:[],pitzBalance:0,ownedIngredientIds:IDS,missionBest:{},inventory:inv,starterGrantClaimedRecipeIds:[]};
+function st(){var s="standalone: "+(navigator.standalone===true?"YES (Home Screen)":"no (Safari)")+"\nsave key: "+KEY+"\n";
+try{var raw=localStorage.getItem(KEY);s+=raw?("Previewセーブ: あり ("+(JSON.parse(raw).ownedIngredientIds||[]).length+" 材料)"):"Previewセーブ: なし"}catch(e){s+="localStorage: 使えません ("+e+")"}
+document.getElementById("st").textContent=s;document.getElementById("st").style.whiteSpace="pre-wrap"}
+document.getElementById("seed").onclick=function(){try{localStorage.setItem(KEY,JSON.stringify(SAVE));st();location.href="./"}catch(e){alert("保存できません: "+e)}};
+document.getElementById("reset").onclick=function(){try{localStorage.removeItem(KEY)}catch(e){}st()};
+document.getElementById("copy").onclick=function(){var t=document.getElementById("probe");t.select();try{navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(t.value):document.execCommand("copy")}catch(e){}this.textContent="コピー済"};
+st();
+})();
+</script></body></html>

@@ -1,0 +1,10 @@
+{
+  "name": "LC-R5b Discovery Harness",
+  "short_name": "R5b Discovery",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#2a170d",
+  "theme_color": "#6b4226"
+}
