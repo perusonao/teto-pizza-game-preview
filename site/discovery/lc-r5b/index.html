@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<!-- LC-R5-b Real-Device Discovery harness. THROWAWAY. Not part of the game, not production, not a route. -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="theme-color" content="#6b4226" />
+<meta name="robots" content="noindex" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="R5b Discovery" />
+<link rel="icon" href="data:," />
+<link rel="manifest" href="manifest.webmanifest" />
+<title>R5b Discovery</title>
+<style>
+/* ===== copied from production src/index.css (viewport lock) ===== */
+:root { color-scheme: light; }
+* { box-sizing: border-box; }
+html { height: 100%; overflow: hidden; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+body { margin: 0; height: 100svh; height: 100dvh; overflow: hidden; background: #d9c9a8;
+  font-family: "Hiragino Maru Gothic ProN","Yu Gothic","Rounded Mplus 1c",system-ui,sans-serif;
+  display: flex; justify-content: center; }
+#root { width: 100%; height: 100svh; height: 100dvh; overflow: hidden; display: flex; justify-content: center; }
+h1,h2,h3,p { margin: 0; }
+button { font-family: inherit; }
+
+/* ===== fake app frame (stage / dock / bake bar stand-ins; sizes copied from R3/R4 measurements) ===== */
+.app-frame { position: relative; width: 100%; max-width: 390px; height: 100svh; height: 100dvh; overflow: hidden;
+  display: flex; flex-direction: column; background: #fff3d6; }
+.fa-header { flex: none; padding: calc(8px + env(safe-area-inset-top, 0px)) 16px 8px; font-size: 13px; font-weight: 800; color: #4a2e0a; }
+.fa-stage-wrap { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; }
+.fa-stage { width: min(76vw, 290px); height: min(76vw, 290px); max-height: 100%; aspect-ratio: 1; border-radius: 50%;
+  background: radial-gradient(circle,#f3c77a 0 60%,#e2a94e 61%); display:flex;align-items:center;justify-content:center; font-size:12px;color:#6b4226;font-weight:700; }
+.fa-dock { flex: none; height: 174px; padding: 6px 16px 0; background: #fbe6b8; position: relative; }
+.fa-chips { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
+.fa-chip { height: 64px; border-radius: 12px; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+.fa-pager { position: relative; height: 28px; margin-top: 6px; display:flex; justify-content:center; align-items:center; font-size:11px;color:#8a6a45; }
+.pantry-entry { position: absolute; left: 0; top: 50%; transform: translateY(-50%); height: 28px; min-width: 44px; padding: 0 10px;
+  border: none; border-radius: 8px; background: #e6d5ae; color: #6b4226; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.pantry-entry::after { content:""; position:absolute; inset:-8px -4px -8px -4px; }
+.pantry-entry:focus-visible { outline: 2px solid #c08a3e; outline-offset: 1px; }
+.fa-bar { flex: none; height: 56px; padding: 6px 16px calc(6px + env(safe-area-inset-bottom, 0px)); background: #6b4226; color:#fff; font-size:12px; display:flex; align-items:center; justify-content:center; box-sizing: content-box; }
+
+/* ===== pantry sheet: copied from production App.css (R3/R4) ===== */
+.pantry-sheet__backdrop { position: fixed; inset: 0; background: rgba(30,18,8,.35); z-index: 25; }
+.pantry-sheet { position: fixed; left: 50%; transform: translateX(-50%); bottom: 0; box-sizing: border-box; width: 100%; max-width: 390px;
+  height: 70vh; height: min(70dvh, calc(100dvh - env(safe-area-inset-top, 0px) - 20px));
+  display: flex; flex-direction: column; gap: 8px; padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px));
+  background: #fff8ea; border-radius: 20px 20px 0 0; box-shadow: 0 -6px 24px rgba(0,0,0,.25); overflow: hidden; }
+/* height mode B (ceiling, "L1" candidate) — harness switch only */
+.mode-B .pantry-sheet { height: calc(100vh - 20px); height: calc(100dvh - env(safe-area-inset-top, 0px) - 20px); }
+.mode-C .pantry-sheet { height: calc(100vh - 20px); height: calc(100dvh - env(safe-area-inset-top, 0px) - 20px); }
+.pantry-sheet__header { display:flex; align-items:center; justify-content:space-between; gap:8px; flex:none; }
+.pantry-sheet__title { font-size:16px; font-weight:800; }
+.pantry-sheet__close { border:none; background:#e6d5ae; border-radius:999px; padding:8px 14px; min-height:44px; min-width:44px; font-size:13px; font-weight:700; }
+.pantry-sheet__subtitle { flex:none; font-size:12px; font-weight:700; color:#6b4226; }
+/* search (candidate: 16px+, 44px+, never removed) */
+.pantry-sheet__search { flex:none; display:flex; gap:8px; align-items:center; }
+.pantry-sheet__search-input { flex:1 1 auto; min-width:0; height:44px; border:2px solid #e6d5ae; border-radius:10px; padding:0 12px; font-size:16px; color:#4a2e0a; background:#fffdf7; -webkit-appearance:none; appearance:none; }
+.pantry-sheet__search-clear { flex:none; width:44px; height:44px; border:none; border-radius:10px; background:#e6d5ae; font-size:16px; font-weight:800; color:#6b4226; }
+/* shelf chips stand-in: fixed slot, scrolls horizontally on its own (DUMMY shelves) */
+.pantry-sheet__shelves { flex:0 0 auto; min-width:0; }
+.chips { display:flex; gap:8px; overflow-x:auto; overscroll-behavior-x:contain; -webkit-overflow-scrolling:touch; height:46px; align-items:center; }
+.chip { flex:none; height:46px; min-width:44px; padding:0 14px; border:2px solid #e6d5ae; border-radius:999px; background:#fff; font-size:13px; font-weight:700; color:#6b4226; }
+.chip[aria-pressed="true"] { background:#ffe7b0; border-color:#d9822b; }
+/* selected strip stand-in (optional, fixed 44px slot) */
+.pantry-sheet__strip { flex:none; height:44px; display:flex; gap:6px; align-items:center; overflow-x:auto; background:#fff3c9; border-radius:10px; padding:0 8px; font-size:12px; color:#6b4226; }
+.pantry-sheet__list { flex:1 1 auto; min-height:0; overflow-y:auto; overscroll-behavior-y:contain; -webkit-overflow-scrolling:touch; }
+.pantry-sheet__list:focus-visible { outline:2px solid #c08a3e; outline-offset:-2px; }
+.pantry-sheet__empty { padding:12px 4px; font-size:12px; color:#8a6a45; }
+.pantry-sheet__grid { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+.pantry-tile { display:flex; flex-direction:column; align-items:center; gap:2px; background:#fff; border:0; width:100%; font:inherit; border-radius:12px; padding:8px 6px 10px; box-shadow:0 1px 3px rgba(0,0,0,.12); text-align:center; }
+.pantry-tile[aria-pressed="true"] { outline:2px solid #d9822b; }
+.pantry-tile__emoji { font-size:22px; line-height:1; }
+.pantry-tile__name { font-size:11px; font-weight:700; color:#4a2e0a; line-height:1.2; }
+.pantry-tile__stock { font-size:12px; font-weight:800; color:#4c9a2a; }
+
+/* ===== measurement HUD (fixed, no pointer events except its buttons; tracks the VISUAL viewport top) ===== */
+#hud { position: fixed; left: 0; top: 0; width: 100%; z-index: 100; pointer-events: none; font: 10px/1.25 ui-monospace,Menlo,monospace; color: #fff; }
+#hud .bar { pointer-events: auto; display:flex; gap:4px; padding: env(safe-area-inset-top, 0px) 4px 2px; background: rgba(0,0,0,.72); flex-wrap: wrap; align-items:center; }
+#hud .bar button { font:11px system-ui; padding:6px 9px; min-height:32px; border:1px solid #888; border-radius:6px; background:#333; color:#fff; touch-action: manipulation; }
+#hud .bar .step { flex:1 1 100%; font:bold 11px system-ui; color:#ffd166; }
+#hud pre { margin:0; padding:2px 4px; background: rgba(0,0,0,.6); white-space: pre-wrap; word-break: break-all; }
+#hud.min pre { display:none; }
+#panel { position: fixed; inset: 0; z-index: 200; background: #111; color: #eee; display: none; flex-direction: column; font: 12px/1.35 system-ui; }
+#panel.open { display: flex; }
+#panel .top { flex:none; display:flex; gap:6px; padding: calc(6px + env(safe-area-inset-top,0px)) 8px 6px; flex-wrap: wrap; }
+#panel .top button { font:13px system-ui; padding:8px 12px; border:1px solid #888; border-radius:6px; background:#333; color:#fff; }
+#panel .body { flex:1 1 auto; min-height:0; overflow:auto; padding: 4px 10px calc(10px + env(safe-area-inset-bottom,0px)); -webkit-overflow-scrolling: touch; }
+#panel textarea { width:100%; height:180px; font:10px ui-monospace,Menlo,monospace; background:#000; color:#9f9; }
+#panel label { display:block; margin:6px 0; font-size:13px; }
+#panel select { font-size:16px; }
+#panel pre { white-space: pre-wrap; word-break: break-all; font:10px ui-monospace,Menlo,monospace; }
+</style>
+</head>
+<body>
+<div id="root">
+  <div class="app-frame" id="app">
+    <div class="fa-header" id="faHeader">DISCOVERY HARNESS — 偽のcooking画面（stage / dock / bake bar 相当）</div>
+    <div class="fa-stage-wrap"><div class="fa-stage" id="faStage">pizza stage 相当</div></div>
+    <div class="fa-dock" id="faDock">
+      <div class="fa-chips"><div class="fa-chip"></div><div class="fa-chip"></div><div class="fa-chip"></div></div>
+      <div class="fa-pager"><button type="button" class="pantry-entry" id="entry">🧺 食材庫</button><span>1 / 4</span></div>
+    </div>
+    <div class="fa-bar" id="faBar">bake bar 相当</div>
+  </div>
+</div>
+<div id="sheetRoot"></div>
+
+<div id="hud">
+  <div class="bar">
+    <div class="step" id="stepLabel"></div>
+    <button data-act="prev">◀</button><button data-act="next">▶</button>
+    <button data-act="snap">SNAP</button><button data-act="panel">LOG/設定</button><button data-act="min">HUD▲</button>
+  </div>
+  <pre id="hudText"></pre>
+</div>
+
+<div id="panel">
+  <div class="top">
+    <button data-p="close">閉じる</button><button data-p="copy">結果をコピー</button>
+    <button data-p="clearlog">ログ消去</button><button data-p="tab-set">設定</button><button data-p="tab-log">ログ</button><button data-p="tab-snap">SNAP</button><button data-p="tab-help">手順</button>
+  </div>
+  <div class="body" id="panelBody"></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var T0 = Date.now();
+  function $(id) { return document.getElementById(id); }
+  function r1(n) { return typeof n === "number" ? Math.round(n * 10) / 10 : n; }
+
+  /* ---------------- data: the 29 production nameJa (verbatim from src/data/ingredients.ts).
+     "shelf" is a HARNESS-ONLY dummy tag so the chip slot can filter; it is NOT the production shelf authority. ---------------- */
+  var ITEMS = [
+    ["トマトソース","ソース","🍅"],["オリーブオイル","ソース","🫒"],["ジェノベーゼソース","ソース","🌿"],
+    ["モッツァレラ","チーズ","🧀"],["ゴルゴンゾーラ","チーズ","🧀"],["パルミジャーノ","チーズ","🧀"],["フォンティーナ","チーズ","🧀"],
+    ["バジル","ハーブ","🌿"],["にんにく","ハーブ","🧄"],["オレガノ","ハーブ","🌿"],["ローズマリー","ハーブ","🌿"],["ケッパー","ハーブ","🫛"],["ブラックオリーブ","ハーブ","🫒"],
+    ["チェリートマト","野菜","🍅"],["マッシュルーム","野菜","🍄"],["たまねぎ","野菜","🧅"],["ナス","野菜","🍆"],["トマト","野菜","🍅"],["じゃがいも","野菜","🥔"],["コーン","野菜","🌽"],
+    ["ソーセージ","肉","🌭"],["ペパロニ","肉","🍖"],["ベーコン","肉","🥓"],["ハム","肉","🍖"],
+    ["アンチョビ","魚介","🐟"],["ツナ","魚介","🐟"],["あさり","魚介","🐚"],
+    ["たまご","他","🥚"],["パイナップル","他","🍍"]
+  ];
+  var SHELVES = ["すべて","ソース","チーズ","ハーブ","野菜","肉","魚介","他"];
+  /* Owner-approved aliases (Alias Audit OD-A2), HARNESS ONLY, NOT a production alias implementation. */
+  var ALIAS = { "たまねぎ": ["玉ねぎ"], "たまご": ["卵"], "モッツァレラ": ["モッツァレラチーズ"] };
+
+  /* production catalogText.normalizeForSearch, re-implemented */
+  function norm(text) {
+    var out = "", s = String(text).normalize("NFKC").toLowerCase();
+    for (var i = 0; i < s.length; i++) { var c = s.charCodeAt(i); out += (c >= 0x30a1 && c <= 0x30f6) ? String.fromCharCode(c - 0x60) : s.charAt(i); }
+    return out.replace(/[\sー‐-―−ｰ・·･]/g, "");
+  }
+  function matches(item, q, useAlias) {
+    var nq = norm(q); if (nq === "") return true;
+    if (norm(item[0]).indexOf(nq) >= 0) return true;
+    if (useAlias && ALIAS[item[0]]) for (var i = 0; i < ALIAS[item[0]].length; i++) if (norm(ALIAS[item[0]][i]).indexOf(nq) >= 0) return true;
+    return false;
+  }
+
+  /* ---------------- settings ---------------- */
+  var DEF = { mode: "A", alias: "1", freeze: "0", strip: "0", enterBlur: "1", preventScroll: "0", rows: "1" };
+  var S = {};
+  (function () {
+    var saved = {}; try { saved = JSON.parse(localStorage.getItem("r5bDisc") || "{}"); } catch (e) {}
+    var q = new URLSearchParams(location.search);
+    Object.keys(DEF).forEach(function (k) { S[k] = q.get(k) || saved[k] || DEF[k]; });
+  })();
+  function saveS() { try { localStorage.setItem("r5bDisc", JSON.stringify(S)); } catch (e) {} }
+
+  /* ---------------- state ---------------- */
+  var open = false, text = "", shelf = "すべて", composing = false, compData = "", frozenText = "";
+  var pins = {}, lastCompEnd = 0, emptyWhileComposing = 0, emptyShown = 0, min = { vvh: 1e9, maxOff: 0, maxScrollY: 0, maxPageTop: 0 };
+  var log = [], snaps = [], stepIdx = 0, sheetEl = null, listEl = null, inputEl = null, focusEl = null, vvFitActive = false;
+  var STEPS = [
+    "H-1 Safariで開く(sheet閉・baseline)", "H-2 食材庫を開く(sheet open・keyboardなし)", "H-3 searchをタップ(focus)・日本語キーボード表示",
+    "H-4 「たまねぎ」入力(変換前)", "H-5 「玉ねぎ」へ変換中(候補選択中・未確定)", "H-6 変換確定", "H-7 結果確認(alias ON/OFF比較)",
+    "H-8 shelf相当チップ変更", "H-9 listスクロール(keyboard表示中)", "H-10 Enter(確定Enter/検索キー)", "H-11 Escape(外付keyboardがあれば)",
+    "H-12 keyboard dismiss", "H-13 sheet close", "H-14 focus return(食材庫ボタン)", "H-15 viewport復帰(offsetTop=0?)",
+    "H-16 bodyスクロールなし確認", "H-17 stage/dock相当領域確認", "H-18 ホーム画面に追加", "H-19 standaloneで起動して同じ主要項目", "H-20 standaloneで keyboard→close→復帰"
+  ];
+
+  /* ---------------- measurement ---------------- */
+  var probe = document.createElement("div");
+  probe.style.cssText = "position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)";
+  document.body.appendChild(probe);
+  function safe() { var cs = getComputedStyle(probe); return [cs.paddingTop, cs.paddingRight, cs.paddingBottom, cs.paddingLeft].map(function (v) { return parseFloat(v) || 0; }); }
+  function rect(el) { if (!el) return null; var b = el.getBoundingClientRect(); return { top: r1(b.top), bottom: r1(b.bottom), h: r1(b.height) }; }
+  function desc(el) { if (!el) return "null"; return el.tagName.toLowerCase() + (el.id ? "#" + el.id : "") + (el.className && typeof el.className === "string" ? "." + el.className.split(" ")[0] : ""); }
+  function isStandalone() { return { navStandalone: navigator.standalone === true, displayModeStandalone: !!(window.matchMedia && matchMedia("(display-mode: standalone)").matches) }; }
+
+  function metrics() {
+    var vv = window.visualViewport, de = document.documentElement;
+    var m = {
+      t: Date.now() - T0,
+      innerW: window.innerWidth, innerH: window.innerHeight, docClientW: de.clientWidth, docClientH: de.clientHeight,
+      screenH: screen.height, dpr: window.devicePixelRatio,
+      vvW: vv ? r1(vv.width) : null, vvH: vv ? r1(vv.height) : null, vvOffTop: vv ? r1(vv.offsetTop) : null, vvOffLeft: vv ? r1(vv.offsetLeft) : null,
+      vvPageTop: vv ? r1(vv.pageTop) : null, vvScale: vv ? r1(vv.scale) : null,
+      scrollY: window.scrollY, scrollX: window.scrollX, docScrollTop: de.scrollTop, bodyScrollTop: document.body.scrollTop,
+      docScrollH_minus_innerH: de.scrollHeight - window.innerHeight,
+      safe_trbl: safe(), active: desc(document.activeElement), standalone: isStandalone(),
+      raw_innerH_minus_vvH: vv ? r1(window.innerHeight - vv.height) : null,
+      sheet: rect(sheetEl), search: rect(inputEl), list: rect(listEl), chips: rect(document.querySelector(".pantry-sheet__shelves")),
+      closeBtn: rect(document.querySelector(".pantry-sheet__close")),
+      stage: rect($("faStage")), dock: rect($("faDock")), bar: rect($("faBar")), entry: rect($("entry")),
+      composing: composing, compData: compData, inputValue: inputEl ? inputEl.value : null, shown: listEl ? listEl.querySelectorAll(".pantry-tile").length : null
+    };
+    if (vv && listEl && sheetEl) {
+      var vvBottom = vv.offsetTop + vv.height, vvTop = vv.offsetTop, l = listEl.getBoundingClientRect(), tiles = listEl.querySelectorAll(".pantry-tile");
+      var tops = {}, fully = 0;
+      for (var i = 0; i < tiles.length; i++) { var b = tiles[i].getBoundingClientRect(); if (b.top >= l.top - 0.5 && b.bottom <= Math.min(l.bottom, vvBottom) + 0.5) tops[Math.round(b.top)] = 1; }
+      fully = Object.keys(tops).length;
+      m.derived = {
+        vvBottom: r1(vvBottom), listVisibleH: r1(Math.max(0, Math.min(l.bottom, vvBottom) - Math.max(l.top, vvTop))),
+        listFullyVisibleRows: fully,
+        searchHidden: inputEl ? (inputEl.getBoundingClientRect().bottom > vvBottom + 0.5 || inputEl.getBoundingClientRect().top < vvTop - 0.5) : null,
+        headerAboveVV: sheetEl.getBoundingClientRect().top < vvTop - 0.5 || (rect(document.querySelector(".pantry-sheet__close")).top < vvTop - 0.5),
+        sheetBottomBelowVV: r1(sheetEl.getBoundingClientRect().bottom - vvBottom)
+      };
+    }
+    return m;
+  }
+  function track(m) {
+    if (m.vvH !== null) { min.vvh = Math.min(min.vvh, m.vvH); min.maxOff = Math.max(min.maxOff, m.vvOffTop); min.maxPageTop = Math.max(min.maxPageTop, m.vvPageTop); }
+    min.maxScrollY = Math.max(min.maxScrollY, Math.abs(m.scrollY), Math.abs(m.docScrollTop), Math.abs(m.bodyScrollTop));
+  }
+  function renderHud() {
+    $("stepLabel").textContent = STEPS[stepIdx] + "  [mode " + S.mode + "]";
+    var m = metrics(); track(m); var d = m.derived || {};
+    var L = [];
+    L.push("inner " + m.innerW + "x" + m.innerH + " docClient " + m.docClientW + "x" + m.docClientH + " screenH " + m.screenH);
+    L.push("vv " + m.vvW + "x" + m.vvH + " offTop " + m.vvOffTop + " pageTop " + m.vvPageTop + " scale " + m.vvScale + "  (inner-vvH=" + m.raw_innerH_minus_vvH + ")");
+    L.push("scrollY " + m.scrollY + " docST " + m.docScrollTop + " bodyST " + m.bodyScrollTop + " safe(t,r,b,l) " + m.safe_trbl.join(","));
+    L.push("sheet " + (m.sheet ? m.sheet.top + "→" + m.sheet.bottom + " h" + m.sheet.h : "-") + " | search " + (m.search ? m.search.top + "→" + m.search.bottom : "-") + " | list " + (m.list ? m.list.top + "→" + m.list.bottom + " h" + m.list.h : "-"));
+    L.push("listVisH " + d.listVisibleH + " fullRows " + d.listFullyVisibleRows + " searchHidden " + d.searchHidden + " headerAboveVV " + d.headerAboveVV + " sheetBottom-vvBottom " + d.sheetBottomBelowVV);
+    L.push("stage " + (m.stage ? m.stage.top + " h" + m.stage.h : "-") + " dock " + (m.dock ? m.dock.top + " h" + m.dock.h : "-") + " active " + m.active + " " + (m.standalone.navStandalone || m.standalone.displayModeStandalone ? "STANDALONE" : "browser"));
+    L.push("IME composing " + composing + " data '" + compData + "' value '" + m.inputValue + "' shown " + m.shown + " | min vvH " + min.vvh + " max offTop " + min.maxOff + " max scroll " + min.maxScrollY + " | emptyWhileComposing " + emptyWhileComposing);
+    $("hudText").textContent = L.join("\n");
+    var vv = window.visualViewport;
+    /* keep the HUD glued to the visual viewport top so it stays visible if Safari pans */
+    $("hud").style.transform = vv ? "translateY(" + vv.offsetTop + "px)" : "";
+  }
+
+  /* ---------------- log ---------------- */
+  function ev(name, detail) {
+    var vv = window.visualViewport;
+    var e = { t: Date.now() - T0, ev: name, d: detail || "", vvH: vv ? r1(vv.height) : null, off: vv ? r1(vv.offsetTop) : null, innerH: window.innerHeight, sy: window.scrollY };
+    log.push(e); if (log.length > 600) log.shift();
+  }
+  window.addEventListener("resize", function () { ev("window.resize", window.innerWidth + "x" + window.innerHeight); });
+  window.addEventListener("scroll", function () { ev("window.scroll", "y=" + window.scrollY); }, true);
+  if (window.visualViewport) {
+    visualViewport.addEventListener("resize", function () { ev("vv.resize", "h=" + r1(visualViewport.height) + " w=" + r1(visualViewport.width)); vvFit(); });
+    visualViewport.addEventListener("scroll", function () { ev("vv.scroll", "off=" + r1(visualViewport.offsetTop) + " pageTop=" + r1(visualViewport.pageTop)); vvFit(); });
+  } else ev("NO visualViewport", "");
+  document.addEventListener("focusin", function (e) { ev("focus", desc(e.target)); }, true);
+  document.addEventListener("focusout", function (e) { ev("blur", desc(e.target) + " → " + desc(e.relatedTarget)); }, true);
+
+  /* ---------------- experiment: visualViewport fit (mode C only; NOT a chosen design) ---------------- */
+  function vvFit() {
+    if (!sheetEl || S.mode !== "C" || !window.visualViewport) return;
+    var focused = document.activeElement === inputEl;
+    if (!focused) { if (vvFitActive) { sheetEl.style.height = ""; sheetEl.style.bottom = ""; vvFitActive = false; ev("vvFit.release", ""); } return; }
+    var vv = visualViewport, layoutH = document.documentElement.clientHeight;
+    var base = layoutH - safe()[0] - 20, h = Math.min(base, vv.height - 8);
+    sheetEl.style.height = Math.max(160, h) + "px";
+    sheetEl.style.bottom = Math.max(0, layoutH - (vv.offsetTop + vv.height)) + "px";
+    vvFitActive = true; ev("vvFit.apply", "h=" + r1(h) + " bottom=" + sheetEl.style.bottom);
+  }
+
+  /* ---------------- sheet ---------------- */
+  function currentText() { return (S.freeze === "1" && composing) ? frozenText : text; }
+  function renderList() {
+    var q = currentText(), out = [], i;
+    for (i = 0; i < ITEMS.length; i++) {
+      var it = ITEMS[i];
+      if (shelf !== "すべて" && it[1] !== shelf) continue;
+      if (!matches(it, q, S.alias === "1")) continue;
+      out.push(it);
+    }
+    var html;
+    if (out.length === 0) { html = '<p class="pantry-sheet__empty">該当する材料がありません</p>'; emptyShown++; if (composing) { emptyWhileComposing++; ev("EMPTY-while-composing", "q='" + q + "'"); } else ev("EMPTY", "q='" + q + "'"); }
+    else html = '<ul class="pantry-sheet__grid">' + out.map(function (it) {
+      return '<li><button type="button" class="pantry-tile" data-n="' + it[0] + '" aria-pressed="' + (pins[it[0]] ? "true" : "false") + '"><span class="pantry-tile__emoji">' + it[2] + '</span><span class="pantry-tile__name">' + it[0] + '</span><span class="pantry-tile__stock">×9</span></button></li>'; }).join("") + "</ul>";
+    listEl.innerHTML = html; listEl.scrollTop = 0;
+    var st = document.querySelector(".pantry-sheet__strip");
+    if (st) { var p = Object.keys(pins).filter(function (k) { return pins[k]; }); st.textContent = p.length ? "選択中: " + p.join(" · ") : "選択中(なし・ダミー)"; }
+  }
+  function openSheet() {
+    if (open) return; open = true; text = ""; shelf = "すべて"; composing = false; compData = ""; pins = {};
+    min = { vvh: 1e9, maxOff: 0, maxScrollY: 0, maxPageTop: 0 }; emptyWhileComposing = 0; emptyShown = 0;
+    document.body.classList.remove("mode-A", "mode-B", "mode-C"); document.body.classList.add("mode-" + S.mode);
+    var root = $("sheetRoot");
+    root.innerHTML =
+      '<div class="pantry-sheet__backdrop" id="bd"><section class="pantry-sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="ttl">' +
+      '<div class="pantry-sheet__header"><h2 class="pantry-sheet__title" id="ttl">🧺 食材庫</h2><button type="button" class="pantry-sheet__close" id="closeBtn">閉じる</button></div>' +
+      '<p class="pantry-sheet__subtitle">トッピング(harness: 全29件・shelfはダミー)</p>' +
+      '<div class="pantry-sheet__search" role="search"><input id="q" class="pantry-sheet__search-input" type="search" inputmode="search" enterkeyhint="search" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="20" aria-label="材料を検索" /><button type="button" class="pantry-sheet__search-clear" id="clr" aria-label="検索をクリア">✕</button></div>' +
+      '<div class="pantry-sheet__shelves"><div class="chips" id="chips">' + SHELVES.map(function (s) { return '<button type="button" class="chip" data-s="' + s + '" aria-pressed="' + (s === "すべて") + '">' + s + "</button>"; }).join("") + "</div></div>" +
+      (S.strip === "1" ? '<div class="pantry-sheet__strip"></div>' : "") +
+      '<div class="pantry-sheet__list" id="list" role="region" aria-label="所持している材料" tabindex="0"></div></section></div>';
+    sheetEl = $("sheet"); listEl = $("list"); inputEl = $("q");
+    $("bd").addEventListener("click", function () { ev("backdrop.click", ""); closeSheet(); });
+    sheetEl.addEventListener("click", function (e) { e.stopPropagation(); });
+    sheetEl.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") { ev("keydown Escape", "isComposing=" + e.isComposing + " keyCode=" + e.keyCode + " target=" + desc(e.target)); e.stopPropagation(); closeSheet(); }
+    });
+    $("closeBtn").addEventListener("click", function () { ev("close.click", ""); closeSheet(); });
+    $("clr").addEventListener("pointerdown", function (e) { e.preventDefault(); });
+    $("clr").addEventListener("click", function () { text = ""; inputEl.value = ""; renderList(); inputEl.focus(); ev("clear.click", "focus kept"); });
+    $("chips").addEventListener("click", function (e) {
+      var b = e.target.closest("button"); if (!b) return; shelf = b.getAttribute("data-s");
+      [].forEach.call(document.querySelectorAll(".chip"), function (c) { c.setAttribute("aria-pressed", String(c.getAttribute("data-s") === shelf)); });
+      ev("shelf.change", shelf + " (active=" + desc(document.activeElement) + ")"); renderList();
+    });
+    listEl.addEventListener("click", function (e) {
+      var b = e.target.closest(".pantry-tile"); if (!b) return; var n = b.getAttribute("data-n"); pins[n] = !pins[n];
+      b.setAttribute("aria-pressed", String(!!pins[n])); ev("tile.click", n + " (active after=" + desc(document.activeElement) + ")");
+      var st = document.querySelector(".pantry-sheet__strip"); if (st) { var p = Object.keys(pins).filter(function (k) { return pins[k]; }); st.textContent = p.length ? "選択中: " + p.join(" · ") : "選択中(なし・ダミー)"; }
+    });
+    listEl.addEventListener("scroll", function () { ev("list.scroll", "top=" + Math.round(listEl.scrollTop)); });
+    /* input / composition / keydown */
+    inputEl.addEventListener("compositionstart", function (e) { composing = true; frozenText = text; compData = e.data || ""; ev("compositionstart", "data='" + (e.data || "") + "' value='" + inputEl.value + "'"); });
+    inputEl.addEventListener("compositionupdate", function (e) { compData = e.data || ""; ev("compositionupdate", "data='" + (e.data || "") + "' value='" + inputEl.value + "'"); });
+    inputEl.addEventListener("compositionend", function (e) {
+      composing = false; lastCompEnd = Date.now(); ev("compositionend", "data='" + (e.data || "") + "' value='" + inputEl.value + "'");
+      text = inputEl.value; renderList();  /* apply after compositionend (covers the freeze option and Safari ordering) */
+    });
+    inputEl.addEventListener("input", function (e) {
+      ev("input", "type=" + e.inputType + " isComposing=" + e.isComposing + " value='" + inputEl.value + "'");
+      if (!(S.freeze === "1" && (composing || e.isComposing))) { text = inputEl.value; renderList(); }
+    });
+    inputEl.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter") return;
+      var sinceEnd = Date.now() - lastCompEnd;
+      ev("keydown Enter", "isComposing=" + e.isComposing + " keyCode=" + e.keyCode + " composingState=" + composing + " msSinceCompositionEnd=" + sinceEnd);
+      var confirmEnter = e.isComposing || e.keyCode === 229 || composing;
+      if (S.enterBlur === "1" && !confirmEnter) { ev("Enter → blur+list focus", "(treated as submit-like)"); inputEl.blur(); listEl.focus(); }
+      else if (confirmEnter) ev("Enter treated as CONFIRM (no blur)", "");
+    });
+    renderList(); ev("sheet.open", "mode=" + S.mode + " activeAfterOpen=" + desc(document.activeElement));
+    $("closeBtn").focus(); /* like production: open lands on 閉じる, NO auto-focus of search */
+    ev("open.focus", desc(document.activeElement));
+  }
+  function closeSheet() {
+    if (!open) return; var before = metrics(); open = false; vvFitActive = false;
+    $("sheetRoot").innerHTML = ""; sheetEl = listEl = inputEl = null;
+    ev("sheet.close", "vvH=" + before.vvH + " off=" + before.vvOffTop);
+    var en = $("entry"); try { en.focus(S.preventScroll === "1" ? { preventScroll: true } : undefined); } catch (e) { en.focus(); }
+    ev("focus.return", desc(document.activeElement) + " preventScroll=" + S.preventScroll);
+    [200, 800, 1500].forEach(function (ms) { setTimeout(function () { var m = metrics(); ev("post-close+" + ms + "ms", "vvH=" + m.vvH + " off=" + m.vvOffTop + " innerH=" + m.innerH + " scrollY=" + m.scrollY + " stageTop=" + (m.stage && m.stage.top) + " dockTop=" + (m.dock && m.dock.top)); }, ms); });
+  }
+  $("entry").addEventListener("click", function () { ev("entry.click", ""); openSheet(); });
+
+  /* ---------------- HUD + panel ---------------- */
+  function snapshot(label) {
+    var m = metrics(); track(m); var s = { label: label || STEPS[stepIdx], mode: S.mode, m: m, sessionMin: JSON.parse(JSON.stringify(min)), emptyWhileComposing: emptyWhileComposing };
+    snaps.push(s); ev("SNAP", s.label); return s;
+  }
+  $("hud").addEventListener("pointerdown", function (e) { if (e.target.closest("button")) e.preventDefault(); }); /* keep focus (and keyboard) where it is */
+  $("hud").addEventListener("click", function (e) {
+    var b = e.target.closest("button"); if (!b) return; var a = b.getAttribute("data-act");
+    if (a === "prev") stepIdx = Math.max(0, stepIdx - 1);
+    if (a === "next") stepIdx = Math.min(STEPS.length - 1, stepIdx + 1);
+    if (a === "snap") { snapshot(); b.textContent = "SNAP ✓" + snaps.length; setTimeout(function () { b.textContent = "SNAP"; }, 800); }
+    if (a === "panel") openPanel("tab-help");
+    if (a === "min") { $("hud").classList.toggle("min"); b.textContent = $("hud").classList.contains("min") ? "HUD▼" : "HUD▲"; }
+    renderHud();
+  });
+  var tab = "tab-help";
+  function report() {
+    return JSON.stringify({ harness: "LC-R5b Discovery", when: new Date().toISOString(), ua: navigator.userAgent, standalone: isStandalone(), settings: S,
+      hasVisualViewport: !!window.visualViewport, snapshots: snaps, log: log.slice(-250) }, null, 1);
+  }
+  function openPanel(t) { tab = t || tab; $("panel").classList.add("open"); drawPanel(); }
+  function drawPanel() {
+    var b = $("panelBody"), h = "";
+    if (tab === "tab-help") h = "<h3>手順(H-1〜)</h3><pre>" + STEPS.map(function (s) { return s; }).join("\n") + "\n\nHUD上部の ◀▶ で手順番号を進め、各状態で SNAP を押す。SNAPボタンはfocusを奪わない(keyboardが出たまま押せる)。最後に「結果をコピー」→ メモ等に貼り付けて共有。</pre>";
+    if (tab === "tab-set") {
+      var o = function (k, vals) { return vals.map(function (v) { return '<option value="' + v[0] + '"' + (S[k] === v[0] ? " selected" : "") + ">" + v[1] + "</option>"; }).join(""); };
+      h = "<h3>設定 (sheetを閉じてから変更)</h3>" +
+        '<label>sheet高さ <select data-k="mode">' + o("mode", [["A", "A: 現行 min(70dvh, 100dvh−safe−20)"], ["B", "B: 上限 100dvh−safe−20 (静的)"], ["C", "C: B + visualViewport fit (EXPERIMENT, 採否未定)"]]) + "</select></label>" +
+        '<label>承認済alias(たまねぎ→玉ねぎ 等) <select data-k="alias">' + o("alias", [["1", "ON (harnessのみ)"], ["0", "OFF (現行相当)"]]) + "</select></label>" +
+        '<label>IME中は絞り込み凍結 <select data-k="freeze">' + o("freeze", [["0", "OFF (input毎に更新)"], ["1", "ON (compositionendで更新)"]]) + "</select></label>" +
+        '<label>selected strip 相当の固定領域 <select data-k="strip">' + o("strip", [["0", "なし"], ["1", "あり(44px)"]]) + "</select></label>" +
+        '<label>Enter(確定Enter除く)でblur→list focus <select data-k="enterBlur">' + o("enterBlur", [["1", "ON"], ["0", "OFF"]]) + "</select></label>" +
+        '<label>close後のfocus復帰 <select data-k="preventScroll">' + o("preventScroll", [["0", "focus() 既定"], ["1", "focus({preventScroll:true})"]]) + "</select></label>";
+    }
+    if (tab === "tab-log") h = "<pre>" + log.slice(-150).map(function (e) { return e.t + " " + e.ev + " " + e.d + "  [vvH " + e.vvH + " off " + e.off + " inH " + e.innerH + " sy " + e.sy + "]"; }).join("\n") + "</pre>";
+    if (tab === "tab-snap") h = "<pre>" + snaps.map(function (s, i) { var m = s.m, d = m.derived || {}; return "#" + (i + 1) + " " + s.label + " [mode " + s.mode + "]\n vv " + m.vvW + "x" + m.vvH + " off " + m.vvOffTop + " pageTop " + m.vvPageTop + " scale " + m.vvScale + " inner " + m.innerW + "x" + m.innerH + " scrollY " + m.scrollY + "\n sheet " + (m.sheet ? m.sheet.top + "→" + m.sheet.bottom + " h" + m.sheet.h : "-") + " search " + (m.search ? m.search.top + "→" + m.search.bottom : "-") + " list " + (m.list ? m.list.top + "→" + m.list.bottom + " h" + m.list.h : "-") + "\n listVisH " + d.listVisibleH + " fullRows " + d.listFullyVisibleRows + " searchHidden " + d.searchHidden + " headerAboveVV " + d.headerAboveVV + "\n stage " + (m.stage && m.stage.top) + " dock " + (m.dock && m.dock.top) + " active " + m.active; }).join("\n\n") + "</pre>";
+    b.innerHTML = h + (tab === "tab-help" ? "" : "") + '<h3>コピー用JSON</h3><textarea id="ta" readonly>' + report().replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</textarea>";
+    [].forEach.call(b.querySelectorAll("select[data-k]"), function (s) { s.addEventListener("change", function () { S[s.getAttribute("data-k")] = s.value; saveS(); }); });
+  }
+  $("panel").addEventListener("click", function (e) {
+    var b = e.target.closest("button"); if (!b) return; var p = b.getAttribute("data-p");
+    if (p === "close") $("panel").classList.remove("open");
+    else if (p === "clearlog") { log = []; drawPanel(); }
+    else if (p === "copy") { var t = report(); if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(function () { b.textContent = "コピー済"; }, function () { $("ta") && $("ta").select(); b.textContent = "手動コピー(下のtextarea)"; }); else { var ta = $("ta"); ta && (ta.select(), document.execCommand && document.execCommand("copy")); b.textContent = "コピー試行"; } }
+    else if (p.indexOf("tab-") === 0) { tab = p; drawPanel(); }
+  });
+
+  document.body.classList.add("mode-" + S.mode);
+  setInterval(function () { if (!$("panel").classList.contains("open")) renderHud(); }, 100);
+  renderHud(); ev("harness.loaded", "standalone=" + JSON.stringify(isStandalone()));
+})();
+</script>
+</body>
+</html>
