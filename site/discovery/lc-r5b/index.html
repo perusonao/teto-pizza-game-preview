@@ -82,6 +82,7 @@ button { font-family: inherit; }
 #hud .bar .step { flex:1 1 100%; font:bold 11px system-ui; color:#ffd166; }
 #hud pre { margin:0; padding:2px 4px; background: rgba(0,0,0,.6); white-space: pre-wrap; word-break: break-all; }
 #hud.min pre { display:none; }
+#banner { position: fixed; left: 0; right: 0; top: 0; z-index: 150; pointer-events: none; display:none; padding: calc(40px + env(safe-area-inset-top,0px)) 10px 10px; background: rgba(255,209,102,.96); color:#222; font: bold 15px/1.35 system-ui; white-space: pre-wrap; }
 #panel { position: fixed; inset: 0; z-index: 200; background: #111; color: #eee; display: none; flex-direction: column; font: 12px/1.35 system-ui; }
 #panel.open { display: flex; }
 #panel .top { flex:none; display:flex; gap:6px; padding: calc(6px + env(safe-area-inset-top,0px)) 8px 6px; flex-wrap: wrap; }
@@ -107,18 +108,19 @@ button { font-family: inherit; }
 </div>
 <div id="sheetRoot"></div>
 
+<div id="banner"></div>
 <div id="hud">
   <div class="bar">
     <div class="step" id="stepLabel"></div>
     <button data-act="prev">◀</button><button data-act="next">▶</button>
-    <button data-act="snap">SNAP</button><button data-act="panel">LOG/設定</button><button data-act="min">HUD▲</button>
+    <button data-act="snap">SNAP</button><button data-act="banner">設定表示</button><button data-act="panel">LOG/設定</button><button data-act="min">HUD▲</button>
   </div>
   <pre id="hudText"></pre>
 </div>
 
 <div id="panel">
   <div class="top">
-    <button data-p="close">閉じる</button><button data-p="copy">結果をコピー</button>
+    <button data-p="close">閉じる</button><button data-p="copy">結果をコピー</button><button data-p="save">JSON保存</button>
     <button data-p="clearlog">ログ消去</button><button data-p="tab-set">設定</button><button data-p="tab-log">ログ</button><button data-p="tab-snap">SNAP</button><button data-p="tab-help">手順</button>
   </div>
   <div class="body" id="panelBody"></div>
@@ -341,6 +343,7 @@ button { font-family: inherit; }
       else if (confirmEnter) ev("Enter treated as CONFIRM (no blur)", "");
     });
     renderList(); ev("sheet.open", "mode=" + S.mode + " activeAfterOpen=" + desc(document.activeElement));
+    showBanner(2500);
     $("closeBtn").focus(); /* like production: open lands on 閉じる, NO auto-focus of search */
     ev("open.focus", desc(document.activeElement));
   }
@@ -366,12 +369,39 @@ button { font-family: inherit; }
     if (a === "next") stepIdx = Math.min(STEPS.length - 1, stepIdx + 1);
     if (a === "snap") { snapshot(); b.textContent = "SNAP ✓" + snaps.length; setTimeout(function () { b.textContent = "SNAP"; }, 800); }
     if (a === "panel") openPanel("tab-help");
+    if (a === "banner") showBanner(6000);
     if (a === "min") { $("hud").classList.toggle("min"); b.textContent = $("hud").classList.contains("min") ? "HUD▼" : "HUD▲"; }
     renderHud();
   });
+  function modeName() { var st = isStandalone(); return (st.navStandalone || st.displayModeStandalone) ? "STANDALONE" : "SAFARI"; }
+  var bannerTimer = null;
+  function showBanner(ms) {
+    var b = $("banner"), vv = window.visualViewport;
+    b.textContent = "【" + modeName() + "】 MODE " + S.mode + (S.mode === "A" ? " (現行 70dvh)" : S.mode === "B" ? " (上限 100dvh−safe−20)" : " (B + visualViewport fit = EXPERIMENT)") +
+      "\nalias=" + (S.alias === "1" ? "ON" : "OFF") + " / IME凍結=" + (S.freeze === "1" ? "ON" : "OFF") + " / strip領域=" + (S.strip === "1" ? "あり" : "なし") +
+      "\nEnter→blur=" + (S.enterBlur === "1" ? "ON" : "OFF") + " / close後focus=" + (S.preventScroll === "1" ? "preventScroll" : "既定") +
+      "\ninner " + window.innerWidth + "x" + window.innerHeight + "  vv " + (vv ? r1(vv.width) + "x" + r1(vv.height) : "-");
+    b.style.transform = vv ? "translateY(" + vv.offsetTop + "px)" : ""; b.style.display = "block";
+    clearTimeout(bannerTimer); bannerTimer = setTimeout(function () { b.style.display = "none"; }, ms || 6000);
+    ev("banner", "mode=" + S.mode + " " + modeName());
+  }
+  var META_KEYS = ["model", "ios", "toolbar", "keyboard", "predictive", "note"];
+  var META = {}; try { META = JSON.parse(localStorage.getItem("r5bDiscMeta") || "{}"); } catch (e) {}
+  function fileName() { return "lc-r5b-discovery-" + (modeName() === "STANDALONE" ? "standalone" : "safari") + "-mode" + S.mode + ".json"; }
+  function saveJson(btn) {
+    var text = report(), name = fileName(), blob = new Blob([text], { type: "application/json" }), done = function (m) { if (btn) btn.textContent = m; };
+    try {
+      var f = new File([blob], name, { type: "application/json" });
+      if (navigator.canShare && navigator.canShare({ files: [f] })) { navigator.share({ files: [f], title: name }).then(function () { done("共有済(" + name + ")"); }, function (e) { done("共有キャンセル/失敗: " + (e && e.name)); }); return; }
+    } catch (e) {}
+    try {
+      var a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 4000); done("ダウンロード試行(" + name + ")。保存されなければ「結果をコピー」を使う");
+    } catch (e) { done("保存不可 → 「結果をコピー」を使う"); }
+  }
   var tab = "tab-help";
   function report() {
-    return JSON.stringify({ harness: "LC-R5b Discovery", when: new Date().toISOString(), ua: navigator.userAgent, standalone: isStandalone(), settings: S,
+    return JSON.stringify({ harness: "LC-R5b Discovery", when: new Date().toISOString(), owner: META, fileName: fileName(), runMode: modeName(), ua: navigator.userAgent, standalone: isStandalone(), settings: S,
       hasVisualViewport: !!window.visualViewport, snapshots: snaps, log: log.slice(-250) }, null, 1);
   }
   function openPanel(t) { tab = t || tab; $("panel").classList.add("open"); drawPanel(); }
@@ -380,7 +410,10 @@ button { font-family: inherit; }
     if (tab === "tab-help") h = "<h3>手順(H-1〜)</h3><pre>" + STEPS.map(function (s) { return s; }).join("\n") + "\n\nHUD上部の ◀▶ で手順番号を進め、各状態で SNAP を押す。SNAPボタンはfocusを奪わない(keyboardが出たまま押せる)。最後に「結果をコピー」→ メモ等に貼り付けて共有。</pre>";
     if (tab === "tab-set") {
       var o = function (k, vals) { return vals.map(function (v) { return '<option value="' + v[0] + '"' + (S[k] === v[0] ? " selected" : "") + ">" + v[1] + "</option>"; }).join(""); };
-      h = "<h3>設定 (sheetを閉じてから変更)</h3>" +
+      var mi = function (k, label, ph) { return '<label>' + label + ' <input data-m="' + k + '" value="' + (META[k] || "").replace(/"/g, "&quot;") + '" placeholder="' + ph + '" style="font-size:16px;width:100%" /></label>'; };
+      h = "<h3>Owner metadata (JSONに入る)</h3>" + mi("model", "iPhone model", "例: iPhone 15") + mi("ios", "iOS version", "例: 18.5") +
+        mi("toolbar", "Safari toolbar位置", "下 / 上(コンパクト) / 標準") + mi("keyboard", "日本語keyboard種別", "かな / ローマ字 / フリック 等") + mi("predictive", "予測変換 ON/OFF", "ON / OFF") + mi("note", "メモ", "") +
+        "<h3>設定 (sheetを閉じてから変更)</h3>" +
         '<label>sheet高さ <select data-k="mode">' + o("mode", [["A", "A: 現行 min(70dvh, 100dvh−safe−20)"], ["B", "B: 上限 100dvh−safe−20 (静的)"], ["C", "C: B + visualViewport fit (EXPERIMENT, 採否未定)"]]) + "</select></label>" +
         '<label>承認済alias(たまねぎ→玉ねぎ 等) <select data-k="alias">' + o("alias", [["1", "ON (harnessのみ)"], ["0", "OFF (現行相当)"]]) + "</select></label>" +
         '<label>IME中は絞り込み凍結 <select data-k="freeze">' + o("freeze", [["0", "OFF (input毎に更新)"], ["1", "ON (compositionendで更新)"]]) + "</select></label>" +
@@ -391,11 +424,13 @@ button { font-family: inherit; }
     if (tab === "tab-log") h = "<pre>" + log.slice(-150).map(function (e) { return e.t + " " + e.ev + " " + e.d + "  [vvH " + e.vvH + " off " + e.off + " inH " + e.innerH + " sy " + e.sy + "]"; }).join("\n") + "</pre>";
     if (tab === "tab-snap") h = "<pre>" + snaps.map(function (s, i) { var m = s.m, d = m.derived || {}; return "#" + (i + 1) + " " + s.label + " [mode " + s.mode + "]\n vv " + m.vvW + "x" + m.vvH + " off " + m.vvOffTop + " pageTop " + m.vvPageTop + " scale " + m.vvScale + " inner " + m.innerW + "x" + m.innerH + " scrollY " + m.scrollY + "\n sheet " + (m.sheet ? m.sheet.top + "→" + m.sheet.bottom + " h" + m.sheet.h : "-") + " search " + (m.search ? m.search.top + "→" + m.search.bottom : "-") + " list " + (m.list ? m.list.top + "→" + m.list.bottom + " h" + m.list.h : "-") + "\n listVisH " + d.listVisibleH + " fullRows " + d.listFullyVisibleRows + " searchHidden " + d.searchHidden + " headerAboveVV " + d.headerAboveVV + "\n stage " + (m.stage && m.stage.top) + " dock " + (m.dock && m.dock.top) + " active " + m.active; }).join("\n\n") + "</pre>";
     b.innerHTML = h + (tab === "tab-help" ? "" : "") + '<h3>コピー用JSON</h3><textarea id="ta" readonly>' + report().replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</textarea>";
+    [].forEach.call(b.querySelectorAll("input[data-m]"), function (i) { i.addEventListener("input", function () { META[i.getAttribute("data-m")] = i.value; try { localStorage.setItem("r5bDiscMeta", JSON.stringify(META)); } catch (e) {} }); });
     [].forEach.call(b.querySelectorAll("select[data-k]"), function (s) { s.addEventListener("change", function () { S[s.getAttribute("data-k")] = s.value; saveS(); }); });
   }
   $("panel").addEventListener("click", function (e) {
     var b = e.target.closest("button"); if (!b) return; var p = b.getAttribute("data-p");
-    if (p === "close") $("panel").classList.remove("open");
+    if (p === "close") { $("panel").classList.remove("open"); showBanner(4000); }
+    else if (p === "save") saveJson(b);
     else if (p === "clearlog") { log = []; drawPanel(); }
     else if (p === "copy") { var t = report(); if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(function () { b.textContent = "コピー済"; }, function () { $("ta") && $("ta").select(); b.textContent = "手動コピー(下のtextarea)"; }); else { var ta = $("ta"); ta && (ta.select(), document.execCommand && document.execCommand("copy")); b.textContent = "コピー試行"; } }
     else if (p.indexOf("tab-") === 0) { tab = p; drawPanel(); }
@@ -403,7 +438,7 @@ button { font-family: inherit; }
 
   document.body.classList.add("mode-" + S.mode);
   setInterval(function () { if (!$("panel").classList.contains("open")) renderHud(); }, 100);
-  renderHud(); ev("harness.loaded", "standalone=" + JSON.stringify(isStandalone()));
+  renderHud(); ev("harness.loaded", "standalone=" + JSON.stringify(isStandalone())); showBanner(7000);
 })();
 </script>
 </body>
