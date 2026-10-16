@@ -93,11 +93,19 @@ jobs:
           SHA: ${{ inputs.sha }}
         run: test "$(git rev-parse HEAD)" = "$SHA"
 
+      # No `cache: npm` here on purpose: this job runs the PR's code, so it must not write caches that
+      # other (main-scoped) workflows would later restore.
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-          cache-dependency-path: source/package-lock.json
+
+      - name: Assert no Firebase config can reach the build (no secrets, no committed .env)
+        run: |
+          # capture form: `env | grep -q` can lose to SIGPIPE under pipefail and miss a match
+          if [ -n "$(env | grep '^VITE_FIREBASE_' || true)" ]; then echo "::error::VITE_FIREBASE_* is set in the build env"; exit 1; fi
+          if find source -maxdepth 1 -name '.env*' ! -name '.env.example' | grep -q .; then
+            echo "::error::the source repo has a loadable .env file"; exit 1
+          fi
 
       - name: Install source deps
         working-directory: source
@@ -148,6 +156,9 @@ jobs:
         with:
           name: pr-page-dist
           path: ${{ runner.temp }}/dist-pr
+
+      - name: Preflight - the live shared Preview must already equal site/ on main
+        run: bash .github/scripts/pr-pages/check-root-synced.sh
 
       - name: Snapshot everything outside pr/${{ needs.validate.outputs.slug }}/
         id: before

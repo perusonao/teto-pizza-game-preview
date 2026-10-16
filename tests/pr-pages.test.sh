@@ -30,6 +30,12 @@ expect_fail "deploy: foreign source repo refused"  v deploy 494 "$SHA" "$SLUG" s
 pull "$T/pull.json" "$SHA" closed;                 expect_fail "deploy: closed PR refused" v deploy
 pull "$T/pull.json" "$SHA" open fork/teto;         expect_fail "deploy: fork head refused" v deploy
 pull "$T/pull.json" bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb; expect_fail "deploy: SHA is not the PR head (stale)" v deploy
+expect_fail "deploy: trailing newline in sha refused"   v deploy 494 "$SHA"$'\n' "$SLUG"
+expect_fail "deploy: leading zero PR number refused"    v deploy 0494 "$SHA" pr-0494-a3d1872
+expect_fail "deploy: 7-digit PR number refused"         v deploy 1234567 "$SHA" pr-1234567-a3d1872
+expect_fail "deploy: PR number with newline refused"    v deploy $'494\nx' "$SHA" "$SLUG"
+expect_fail "deploy: slug with path traversal refused"  v deploy 494 "$SHA" "pr-494-../../x"
+expect_fail "deploy: empty action refused"              v ""
 expect_ok   "remove: needs no API / open PR"       v remove
 expect_fail "remove: confirm still required"       v remove 494 "$SHA" nope
 
@@ -70,6 +76,8 @@ git reset -q --hard HEAD
 ln -s /etc/passwd "$T/dist/evil"; expect_fail "apply refuses a non-regular file in dist" env PR_NUMBER=494 SHA=$SHA bash "$S/apply.sh" deploy $SLUG "$T/dist"; rm "$T/dist/evil"; git reset -q --hard HEAD; git clean -fdq
 expect_fail "guard refuses a bad slug (path traversal)" bash "$S/guard-paths.sh" "pr-1-../../x"
 
+echo hidden > "$T/dist/.secret"; expect_fail "apply refuses dotfiles in dist" env PR_NUMBER=494 SHA=$SHA bash "$S/apply.sh" deploy $SLUG "$T/dist"; rm "$T/dist/.secret"; git reset -q --hard HEAD; git clean -fdq
+
 echo "  -- cap on published pages"
 for i in 2 3 4 5; do mkdir -p pr/pr-$i-bbbbbbb; echo x > pr/pr-$i-bbbbbbb/index.html; done; git add -A; git commit -qm fill
 expect_fail "apply refuses a 6th PR page" env PR_NUMBER=494 SHA=$SHA bash "$S/apply.sh" deploy pr-494-cccccc1 "$T/dist"
@@ -99,14 +107,46 @@ cd "$ROOT"
 mk() { rm -rf "$T/d"; mkdir -p "$T/d/assets"
   printf '{ "start_url": "/teto-pizza-game/", "scope": "/teto-pizza-game/" }' > "$T/d/manifest.webmanifest"
   printf '<!doctype html><html><head><meta charset="UTF-8" /><script src="/teto-pizza-game-preview/pr/%s/assets/i.js"></script></head></html>' $SLUG > "$T/d/index.html"
-  printf 'const k="teto-pizza-preview-save-v1";const b="/teto-pizza-game-preview/pr/%s/";' $SLUG > "$T/d/assets/i.js"; }
+  cat > "$T/d/assets/i.js" <<JS
+const a=\`teto-pizza-preview-save-v1\`,b="teto-pizza-cheese-canvas",c='teto-pizza-preview-hint5-optin',d="teto.dev.researchIdentify",e="teto.dev.hint5Ladder";
+const base="/teto-pizza-game-preview/pr/$SLUG/";const lookalike="tetoXdevXresearchIdentify";const css="teto-card is-open";
+JS
+}
 mk; expect_ok "patch: all assertions pass on a good dist" bash "$S/patch-build.sh" "$T/d" $SLUG
-grep -q "teto-pizza-preview-$SLUG-save-v1" "$T/d/assets/i.js" && ! grep -q 'preview-save-v1' "$T/d/assets/i.js" && ok "save key namespaced, old key gone" || bad "save key"
+for k in teto-pizza-preview-save-v1 teto-pizza-cheese-canvas teto-pizza-preview-hint5-optin teto.dev.researchIdentify teto.dev.hint5Ladder; do
+  grep -qF "${k}--${SLUG}" "$T/d/assets/i.js" && ! grep -qE "[\"'\`]${k//./\\.}[\"'\`]" "$T/d/assets/i.js" && ok "key namespaced, bare literal gone: $k" || bad "key not namespaced: $k"
+done
+grep -q 'tetoXdevXresearchIdentify"' "$T/d/assets/i.js" && ok "unrelated look-alike string untouched" || bad "look-alike altered"
 grep -q "\"scope\": \"/teto-pizza-game-preview/pr/$SLUG/\"" "$T/d/manifest.webmanifest" && ok "manifest scope/start_url point at the PR path" || bad "manifest"
 grep -q noindex "$T/d/index.html" && ok "noindex added" || bad "noindex"
-mk; sed -i 's/preview-save-v1/other-key/' "$T/d/assets/i.js"; expect_fail "patch: fails if the save key literal disappears (no silent sharing)" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; sed -i 's/teto-pizza-preview-save-v1/other-key/' "$T/d/assets/i.js"; expect_fail "patch: fails if the save key literal disappears (no silent sharing)" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo 'localStorage.getItem("teto-pizza-new-opt-in")' >> "$T/d/assets/i.js"; expect_fail "patch: fails on an UNKNOWN teto- key (fail-closed)" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo 'k="teto-pizza-"+x' >> "$T/d/assets/i.js"; expect_fail "patch: fails on a concatenated teto- key prefix" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; echo 'fetch("/teto-pizza-game/x")' >> "$T/d/assets/i.js"; expect_fail "patch: fails on a reference to the production base" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; echo 'fetch("/teto-pizza-game-preview/assets/x.js")' >> "$T/d/assets/i.js"; expect_fail "patch: fails on a reference to the shared Preview root" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo 'k="AIzaSyA1234567890abcdefghijklmnopqrstuv"' >> "$T/d/assets/i.js"; expect_fail "patch: fails if a Firebase-style API key is baked in" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo x > "$T/d/.hidden"; expect_fail "patch: fails on dotfiles" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; bash "$S/patch-build.sh" "$T/d" $SLUG >/dev/null; expect_fail "patch: refuses to run twice on the same dist" bash "$S/patch-build.sh" "$T/d" $SLUG
+
+echo "live checks (local http server stands in for github.io)"
+LROOT="$T/live"; mkdir -p "$LROOT/teto-pizza-game-preview"; cp -R "$ROOT/site/." "$LROOT/teto-pizza-game-preview/"
+PORT=$((20000 + RANDOM % 20000)); ( cd "$LROOT" && exec python3 -m http.server $PORT --bind 127.0.0.1 >/dev/null 2>&1 ) & SRV=$!
+sleep 1; export LIVE_ORIGIN="http://127.0.0.1:$PORT" TRIES=2 INTERVAL=1
+cd "$ROOT"
+expect_ok   "check-root-synced: live root == site/index.html" bash "$S/check-root-synced.sh"
+echo "<!-- drift -->" >> "$LROOT/teto-pizza-game-preview/index.html"
+expect_fail "check-root-synced: refuses when live root differs (pending shared update)" bash "$S/check-root-synced.sh"
+cp "$ROOT/site/index.html" "$LROOT/teto-pizza-game-preview/index.html"
+expect_fail "verify-live deploy: fails while the page is absent" bash "$S/verify-live.sh" deploy $SLUG
+mkdir -p "$LROOT/teto-pizza-game-preview/pr/$SLUG/assets"
+echo "<script src=\"/teto-pizza-game-preview/pr/$SLUG/assets/i.js\"></script>" > "$LROOT/teto-pizza-game-preview/pr/$SLUG/index.html"
+expect_ok   "verify-live deploy: page present + root unchanged" bash "$S/verify-live.sh" deploy $SLUG
+expect_fail "verify-live remove: fails while the page is still there" bash "$S/verify-live.sh" remove $SLUG
+rm -rf "$LROOT/teto-pizza-game-preview/pr"
+expect_ok   "verify-live remove: 404 + root unchanged" bash "$S/verify-live.sh" remove $SLUG
+kill $SRV 2>/dev/null; wait $SRV 2>/dev/null
+LIVE_ORIGIN="http://127.0.0.1:1" expect_fail "check-root-synced: unreachable live root fails closed" bash "$S/check-root-synced.sh"
+unset LIVE_ORIGIN TRIES INTERVAL
 
 echo "pages.yml assemble step"
 python3 - "$ROOT/.github/workflows/pages.yml" "$T/assemble.sh" <<'PY'

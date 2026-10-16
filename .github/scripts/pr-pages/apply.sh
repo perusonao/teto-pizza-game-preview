@@ -19,6 +19,7 @@ case "$action" in
     fi
     ((others < PR_PAGES_MAX)) || die "already ${others} other PR pages published (max ${PR_PAGES_MAX}); remove one first"
     if find "$dist" ! -type f ! -type d -print -quit | grep -q .; then die "dist contains non-regular files"; fi
+    if find "$dist" -name '.*' -print -quit | grep -q .; then die "dist contains dotfiles/dot-directories"; fi
     rm -rf -- "$target"
     mkdir -p -- "$target"
     cp -R "$dist"/. "$target"/

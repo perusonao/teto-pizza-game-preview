@@ -6,7 +6,6 @@ PAGES_BASE="/teto-pizza-game-preview"      # the shared Preview's own base (neve
 PR_PAGES_DIR="pr"                          # top-level dir in this repo; published at ${PAGES_BASE}/pr/<slug>/
 PR_PAGES_MAX=5                             # hard cap on simultaneously published PR pages
 PR_PAGES_MAX_BYTES=$((60 * 1024 * 1024))   # hard cap on one page's size
-SAVE_KEY_OLD="teto-pizza-preview-save-v1"  # the Preview build's save key (src/state/persistence.ts)
 
 die() { echo "::error::$*" >&2; exit 1; }
 
