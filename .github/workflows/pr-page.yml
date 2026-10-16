@@ -1,0 +1,226 @@
+name: Publish / remove a PR-scoped preview page
+
+# Publishes ONE build of perusonao/teto-pizza-game at an independent path
+#   https://perusonao.github.io/teto-pizza-game-preview/pr/pr-<N>-<sha7>/
+# without touching the shared Preview at the site root, and removes it again.
+# See docs/PR-PAGES.md for the design, the safety checks and the rollback.
+#
+# Manual only (workflow_dispatch). Safety rails, all enforced in .github/scripts/pr-pages/:
+#   * sha must be the FULL 40-hex SHA and must be the current head of the OPEN same-repo PR <N>
+#   * `confirm` must be typed as the exact slug (pr-<N>-<sha7>)
+#   * only pr/<slug>/ may change (staged, again after any rebase, and in a revert)
+#   * the build job has no write token and no secrets; the publish job never runs PR code
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "deploy = build+publish this PR page; remove = delete this PR page"
+        type: choice
+        options: [deploy, remove]
+        required: true
+        default: deploy
+      pr_number:
+        description: "Pull request number on perusonao/teto-pizza-game (e.g. 494)"
+        required: true
+      sha:
+        description: "FULL 40-character commit SHA (the PR's current head)"
+        required: true
+      confirm:
+        description: "Type the slug to confirm: pr-<number>-<first 7 of sha> (e.g. pr-494-a3d1872)"
+        required: true
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash   # = bash -eo pipefail, so `cmd | tee` cannot mask a failure
+
+# Same group as deploy-from-source.yml: never run concurrently with a shared-Preview deploy or
+# another PR-page job (no queued cancellation: a run in progress is never cancelled).
+concurrency:
+  group: deploy-from-source
+  cancel-in-progress: false
+
+env:
+  SOURCE_REPO: perusonao/teto-pizza-game
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'   # only the reviewed workflow on main may publish
+    permissions:
+      contents: read
+    outputs:
+      slug: ${{ steps.v.outputs.slug }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: v
+        env:
+          ACTION: ${{ inputs.action }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          SHA: ${{ inputs.sha }}
+          CONFIRM: ${{ inputs.confirm }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/pr-pages/validate-inputs.sh
+
+  build:
+    needs: validate
+    if: inputs.action == 'deploy'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read          # no write token, no secrets in this job (it runs the PR's npm scripts)
+    steps:
+      - name: Checkout this repo (scripts only)
+        uses: actions/checkout@v4
+        with:
+          path: preview
+          persist-credentials: false
+
+      - name: Checkout the source repo at the pinned full SHA
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPO }}
+          ref: ${{ inputs.sha }}
+          path: source
+          persist-credentials: false
+
+      - name: Assert the checkout is exactly the requested commit
+        working-directory: source
+        env:
+          SHA: ${{ inputs.sha }}
+        run: test "$(git rev-parse HEAD)" = "$SHA"
+
+      # No `cache: npm` here on purpose: this job runs the PR's code, so it must not write caches that
+      # other (main-scoped) workflows would later restore.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Assert no Firebase config can reach the build (no secrets, no committed .env)
+        run: |
+          # capture form: `env | grep -q` can lose to SIGPIPE under pipefail and miss a match
+          if [ -n "$(env | grep '^VITE_FIREBASE_' || true)" ]; then echo "::error::VITE_FIREBASE_* is set in the build env"; exit 1; fi
+          if find source -maxdepth 1 -name '.env*' ! -name '.env.example' | grep -q .; then
+            echo "::error::the source repo has a loadable .env file"; exit 1
+          fi
+
+      - name: Install source deps
+        working-directory: source
+        run: npm ci
+
+      - name: Build with the PR-scoped base path + Preview badge
+        working-directory: source
+        env:
+          SLUG: ${{ needs.validate.outputs.slug }}
+          VITE_PREVIEW_MODE: "1"
+          VITE_PREVIEW_PR: ${{ inputs.pr_number }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          export VITE_PREVIEW_SHA="${SHA:0:7}"
+          npx vite build --base="/teto-pizza-game-preview/pr/${SLUG}/" --outDir dist-pr
+
+      - name: Patch manifest / noindex / save key and assert path hygiene
+        env:
+          SLUG: ${{ needs.validate.outputs.slug }}
+        run: bash preview/.github/scripts/pr-pages/patch-build.sh source/dist-pr "$SLUG"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr-page-dist
+          path: source/dist-pr
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    needs: [validate, build]
+    # build is skipped for remove; for deploy it must have succeeded
+    if: ${{ !cancelled() && needs.validate.result == 'success' && (needs.build.result == 'success' || (inputs.action == 'remove' && needs.build.result == 'skipped')) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write         # commit pr/<slug>/ to main
+      actions: write          # dispatch pages.yml (pushes made with GITHUB_TOKEN do not trigger it)
+    env:
+      SLUG: ${{ needs.validate.outputs.slug }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Download the patched build (deploy only)
+        if: inputs.action == 'deploy'
+        uses: actions/download-artifact@v4
+        with:
+          name: pr-page-dist
+          path: ${{ runner.temp }}/dist-pr
+
+      - name: Re-validate the PR head right before publishing (it may have changed during the build)
+        if: inputs.action == 'deploy'
+        env:
+          ACTION: ${{ inputs.action }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          SHA: ${{ inputs.sha }}
+          CONFIRM: ${{ inputs.confirm }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/pr-pages/validate-inputs.sh
+
+      - name: Preflight - the live shared Preview must already equal site/ on main
+        run: bash .github/scripts/pr-pages/check-root-synced.sh
+
+      - name: Snapshot everything outside pr/${{ needs.validate.outputs.slug }}/
+        id: before
+        run: |
+          echo "tree=$(git ls-files -s | awk -F'\t' -v p="pr/${SLUG}/" 'index($2,p)!=1' | sha256sum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Apply (stages only pr/<slug>/ and guards it)
+        env:
+          ACTION: ${{ inputs.action }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          SHA: ${{ inputs.sha }}
+          RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+          DIST: ${{ runner.temp }}/dist-pr
+        run: |
+          if [ "$ACTION" = deploy ]; then
+            bash .github/scripts/pr-pages/apply.sh deploy "$SLUG" "$DIST"
+          else
+            bash .github/scripts/pr-pages/apply.sh remove "$SLUG"
+          fi
+
+      - name: Prove nothing outside the target path is staged
+        env:
+          BEFORE: ${{ steps.before.outputs.tree }}
+        run: |
+          after="$(git ls-files -s | awk -F'\t' -v p="pr/${SLUG}/" 'index($2,p)!=1' | sha256sum | cut -d' ' -f1)"
+          test "$after" = "$BEFORE" || { echo "::error::files outside pr/${SLUG}/ changed"; exit 1; }
+
+      - name: Commit and push (bounded retry, guard re-run after every rebase)
+        id: push
+        env:
+          ACTION: ${{ inputs.action }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          bash .github/scripts/pr-pages/push.sh "$SLUG" "PR page ${ACTION}: ${SLUG} (PR #${PR_NUMBER}, ${SHA:0:7})" | tee push.out
+          cat push.out | grep -E '^(changed|sha)=' >> "$GITHUB_OUTPUT"
+
+      - name: Re-deploy Pages (the GITHUB_TOKEN push above does not trigger pages.yml)
+        if: steps.push.outputs.changed == 'true'
+        run: gh workflow run pages.yml --ref main
+
+      - name: Verify the live site
+        if: steps.push.outputs.changed == 'true'
+        env:
+          ACTION: ${{ inputs.action }}
+          EXPECT_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: bash .github/scripts/pr-pages/verify-live.sh "$ACTION" "$SLUG"
+
+      - name: Roll back a failed deploy (only if our commit is still the tip of main)
+        if: ${{ failure() && inputs.action == 'deploy' && steps.push.outputs.changed == 'true' }}
+        env:
+          PUSHED: ${{ steps.push.outputs.sha }}
+        run: |
+          bash .github/scripts/pr-pages/rollback.sh "$SLUG" "$PUSHED" | tee rollback.out
+          if grep -q '^reverted=true' rollback.out; then gh workflow run pages.yml --ref main; fi

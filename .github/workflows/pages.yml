@@ -23,8 +23,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      # Publish site/ (the shared Preview, written by deploy-from-source.yml) plus the optional,
+      # separately stored PR pages in pr/ (written by pr-page.yml). deploy-from-source.yml replaces
+      # site/ wholesale but never touches pr/, so a shared-Preview update cannot delete a PR page.
+      # With no pr/ directory the artifact is identical to the previous `path: site`.
+      - name: Assemble the Pages root (site/ + optional pr/)
+        run: |
+          set -euo pipefail
+          if [ -e site/pr ]; then echo "::error::site/pr is reserved for PR pages"; exit 1; fi
+          if [ -d pr ] && find pr ! -type f ! -type d -print -quit | grep -q .; then
+            echo "::error::pr/ contains non-regular files"; exit 1
+          fi
+          rm -rf _pages && mkdir _pages
+          cp -R site/. _pages/
+          if [ -d pr ]; then mkdir _pages/pr && cp -R pr/. _pages/pr/; fi
+          diff -r --exclude=pr site _pages   # the root must be exactly site/
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: _pages
       - id: deployment
         uses: actions/deploy-pages@v4
