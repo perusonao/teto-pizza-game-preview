@@ -19,8 +19,9 @@ Actions -> **Publish / remove a PR-scoped preview page** -> Run workflow (branch
 | sha | the **full 40-hex** head SHA of that PR |
 | confirm | the slug, typed by hand: `pr-<number>-<first 7 of sha>` |
 
-`deploy` builds the pinned commit, publishes `pr/<slug>/`, re-deploys Pages, then polls the live URL and
-checks that the shared Preview root is byte-identical to `site/index.html`. `remove` deletes `pr/<slug>/`
+`deploy` builds the pinned commit, re-validates the PR head, publishes `pr/<slug>/`, re-deploys Pages, then polls the
+live page until its `preview-meta.json` carries **this run's id** (so a page left over from an earlier deploy of
+the same slug cannot pass) and checks that the shared Preview root is byte-identical to `site/index.html`. `remove` deletes `pr/<slug>/`
 and waits for the URL to return 404. Open the page in a normal Safari tab (not "Add to Home Screen").
 The PREVIEW badge must read `PR#<number> · <sha7>`.
 
@@ -36,6 +37,30 @@ replaces `site/` with `rm -rf` but never touches `pr/`, so a shared-Preview upda
 page**. With no `pr/` directory the Pages artifact is identical to the old `path: site` (the step
 `diff -r`s it). `site/pr` is reserved; if it ever exists the Pages step fails.
 
+## Trust model (read this before dispatching)
+
+A PR page is **PR code running on `https://perusonao.github.io`**, the same origin as production
+(`/teto-pizza-game/`) and the shared Preview. URL paths do not isolate an origin, so this is **not a sandbox**:
+code on a PR page could read or overwrite the production save (`teto-pizza-save-v1`), the shared Preview save and
+anything else in that origin's localStorage / IndexedDB. (The existing `deploy-from-source.yml` pipeline has the
+same property for any ref; this workflow does not make it worse, but does not remove it either.)
+What this design does about it:
+
+- only an **open, same-repo PR opened by an allow-listed author** (`ALLOWED_PR_AUTHORS`, default `perusonao`) can
+  be published, at the **exact head SHA** the dispatcher typed (re-checked right before the write-capable step);
+  `workflow_dispatch` itself needs write access to this repo — review the diff before you dispatch;
+- the key rewrite and the `--slug` suffix prevent **accidental** sharing (a normal game build never touches the
+  other saves or opt-ins); they are not a defence against hostile code;
+- a **CSP `<meta>`** (`connect-src 'self'`, no inline/eval script, `object-src 'none'`, `form-action 'self'`) makes
+  the **browser** block fetch / XHR / WebSocket / EventSource to any other origin (Firestore, production
+  endpoints, ...). It is a layer, not a wall: `navigator.sendBeacon` and top-level navigations are not covered
+  (the runtime test reports the former as a known gap), and it cannot stop same-origin storage access;
+- the page ships with no Firebase config (build job has no secrets), so the app never initialises Firebase.
+
+A truly isolated origin (a separate account/org Pages site or a custom domain) is the only complete answer. That
+needs a decision and setup outside this repo; it is **not** implemented here. If PRs from other authors will ever
+be previewed, do not use this workflow for them.
+
 ## Tests
 
 - `bash tests/pr-pages.test.sh` — offline unit tests (inputs, guard, push/rebase, rollback, patching, live checks
@@ -46,7 +71,7 @@ page**. With no `pr/` directory the Pages artifact is identical to the old `path
 
 ## Safety checks
 
-- **Inputs**: `sha` must be 40 lowercase hex (no branch names / short SHAs); for `deploy` the PR must be
+- **Inputs**: PR author must be allow-listed (see Trust model); `sha` must be 40 lowercase hex (no branch names / short SHAs); for `deploy` the PR must be
   open, same-repo (no fork), and `sha` must be its **current head**; `confirm` must equal the slug.
 - **Only `pr/<slug>/` may change**: checked on the staged index, as a before/after hash of every other
   tracked file, again after any rebase onto a concurrent push, and again for a rollback revert. Symlinks and

@@ -13,8 +13,8 @@ expect_fail() { local n="$1"; shift; if "$@" >"$T/out" 2>&1; then bad "$n (unexp
 
 SHA=a3d1872fad787f53d4e4bd833fa7134cca1f379f
 SLUG=pr-494-a3d1872
-pull() { jq -n --arg sha "${2:-$SHA}" --arg st "${3:-open}" --arg hr "${4:-perusonao/teto-pizza-game}" \
-  '{state:$st,head:{sha:$sha,repo:{full_name:$hr}},base:{repo:{full_name:"perusonao/teto-pizza-game"}}}' > "$1"; }
+pull() { jq -n --arg sha "${2:-$SHA}" --arg st "${3:-open}" --arg hr "${4:-perusonao/teto-pizza-game}" --arg u "${5:-perusonao}" \
+  '{state:$st,user:{login:$u},head:{sha:$sha,repo:{full_name:$hr}},base:{repo:{full_name:"perusonao/teto-pizza-game"}}}' > "$1"; }
 v() { ( export ACTION="$1" PR_NUMBER="${2:-494}" SHA="${3:-$SHA}" CONFIRM="${4:-$SLUG}" SOURCE_REPO="${5:-perusonao/teto-pizza-game}" PULL_JSON_FILE="$T/pull.json"; bash "$S/validate-inputs.sh" ); }
 
 echo "validate-inputs"
@@ -36,6 +36,14 @@ expect_fail "deploy: 7-digit PR number refused"         v deploy 1234567 "$SHA" 
 expect_fail "deploy: PR number with newline refused"    v deploy $'494\nx' "$SHA" "$SLUG"
 expect_fail "deploy: slug with path traversal refused"  v deploy 494 "$SHA" "pr-494-../../x"
 expect_fail "deploy: empty action refused"              v ""
+pull "$T/pull.json" "$SHA" open perusonao/teto-pizza-game someone-else; expect_fail "deploy: PR by a non-allow-listed author refused" v deploy
+pull "$T/pull.json" "$SHA" open perusonao/teto-pizza-game perusonao;    expect_ok   "deploy: allow-listed author accepted" v deploy
+pull "$T/pull.json" "$SHA" open perusonao/teto-pizza-game someone-else; expect_ok   "deploy: author allow-list is configurable (ALLOWED_PR_AUTHORS)" env ALLOWED_PR_AUTHORS=a,someone-else,b bash -c 'ACTION=deploy PR_NUMBER=494 SHA='"$SHA"' CONFIRM='"$SLUG"' SOURCE_REPO=perusonao/teto-pizza-game PULL_JSON_FILE='"$T"'/pull.json bash '"$S"'/validate-inputs.sh'
+pull "$T/pull.json" "$SHA" open perusonao/teto-pizza-game perusonao
+echo "  -- the PR moved on during the build (re-validation before publish, same script)"
+pull "$T/pull.json" cccccccccccccccccccccccccccccccccccccccc; expect_fail "re-validate: head changed after the build -> refused" v deploy
+pull "$T/pull.json" "$SHA" closed;                             expect_fail "re-validate: PR closed after the build -> refused" v deploy
+pull "$T/pull.json"
 expect_ok   "remove: needs no API / open PR"       v remove
 expect_fail "remove: confirm still required"       v remove 494 "$SHA" nope
 
@@ -126,6 +134,18 @@ mk; echo 'fetch("/teto-pizza-game/x")' >> "$T/d/assets/i.js"; expect_fail "patch
 mk; echo 'fetch("/teto-pizza-game-preview/assets/x.js")' >> "$T/d/assets/i.js"; expect_fail "patch: fails on a reference to the shared Preview root" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; echo 'k="AIzaSyA1234567890abcdefghijklmnopqrstuv"' >> "$T/d/assets/i.js"; expect_fail "patch: fails if a Firebase-style API key is baked in" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; echo x > "$T/d/.hidden"; expect_fail "patch: fails on dotfiles" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; bash "$S/patch-build.sh" "$T/d" $SLUG >/dev/null
+grep -q 'http-equiv="Content-Security-Policy"' "$T/d/index.html" && grep -q "connect-src 'self'" "$T/d/index.html" && ok "CSP meta added (connect-src 'self')" || bad "CSP missing"
+[[ "$(grep -n -E 'Content-Security-Policy|<script' "$T/d/index.html" | head -1 | grep -c Content-Security-Policy)" == 1 ]] && ok "CSP comes before the first script" || bad "CSP order"
+mk; sed -i 's#<head>#<head><script>localStorage.getItem("teto-pizza-preview-save-v1")</script>#' "$T/d/index.html"
+expect_ok "patch: rewrites keys in an inline <script> of index.html too" bash "$S/patch-build.sh" "$T/d" $SLUG
+grep -q "preview-save-v1--$SLUG" "$T/d/index.html" && ok "inline script key namespaced" || bad "inline script key left bare"
+mk; echo 'export const k="teto-pizza-preview-save-v1";' > "$T/d/assets/w.mjs"; echo '{"k":"teto-pizza-cheese-canvas"}' > "$T/d/assets/c.json"
+expect_ok "patch: .mjs / .json are scanned as well" bash "$S/patch-build.sh" "$T/d" $SLUG
+! grep -rqE "[\"'\`]teto-pizza-(preview-save-v1|cheese-canvas)[\"'\`]" "$T/d" && ok "no bare key in any emitted file" || bad "bare key left in a non-js file"
+mk; printf '\x00\x01teto-pizza-preview-save-v1\x00' > "$T/d/assets/blob.bin"; expect_fail "patch: a binary file embedding a key fails the build" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo 'k="teto.dev.newThing"' >> "$T/d/assets/i.js"; expect_fail "patch: unknown teto.dev.* flag fails closed" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; sed -i 's#<meta charset="UTF-8" />#<meta charset="UTF-8" /><meta http-equiv="Content-Security-Policy" content="x">#' "$T/d/index.html"; expect_fail "patch: refuses an index.html that already has a CSP" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; bash "$S/patch-build.sh" "$T/d" $SLUG >/dev/null; expect_fail "patch: refuses to run twice on the same dist" bash "$S/patch-build.sh" "$T/d" $SLUG
 
 echo "live checks (local http server stands in for github.io)"
@@ -137,10 +157,15 @@ expect_ok   "check-root-synced: live root == site/index.html" bash "$S/check-roo
 echo "<!-- drift -->" >> "$LROOT/teto-pizza-game-preview/index.html"
 expect_fail "check-root-synced: refuses when live root differs (pending shared update)" bash "$S/check-root-synced.sh"
 cp "$ROOT/site/index.html" "$LROOT/teto-pizza-game-preview/index.html"
+export EXPECT_RUN_ID=777-1
 expect_fail "verify-live deploy: fails while the page is absent" bash "$S/verify-live.sh" deploy $SLUG
 mkdir -p "$LROOT/teto-pizza-game-preview/pr/$SLUG/assets"
 echo "<script src=\"/teto-pizza-game-preview/pr/$SLUG/assets/i.js\"></script>" > "$LROOT/teto-pizza-game-preview/pr/$SLUG/index.html"
-expect_ok   "verify-live deploy: page present + root unchanged" bash "$S/verify-live.sh" deploy $SLUG
+echo '{"workflowRun":"700-1"}' > "$LROOT/teto-pizza-game-preview/pr/$SLUG/preview-meta.json"
+expect_fail "verify-live deploy: a page left by an EARLIER run does not satisfy it (redeploy)" bash "$S/verify-live.sh" deploy $SLUG
+echo '{"workflowRun":"777-1"}' > "$LROOT/teto-pizza-game-preview/pr/$SLUG/preview-meta.json"
+expect_ok   "verify-live deploy: this run's marker + root unchanged" bash "$S/verify-live.sh" deploy $SLUG
+( unset EXPECT_RUN_ID; expect_fail "verify-live deploy: refuses to run without EXPECT_RUN_ID" bash "$S/verify-live.sh" deploy $SLUG )
 expect_fail "verify-live remove: fails while the page is still there" bash "$S/verify-live.sh" remove $SLUG
 rm -rf "$LROOT/teto-pizza-game-preview/pr"
 expect_ok   "verify-live remove: 404 + root unchanged" bash "$S/verify-live.sh" remove $SLUG

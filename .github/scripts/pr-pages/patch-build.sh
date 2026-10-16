@@ -24,6 +24,19 @@ grep -q '<meta charset="UTF-8" />' "$dist/index.html" || die "index.html charset
 sed -i 's#<meta charset="UTF-8" />#<meta charset="UTF-8" />\n    <meta name="robots" content="noindex, nofollow" />#' "$dist/index.html"
 grep -q 'name="robots" content="noindex, nofollow"' "$dist/index.html" || die "noindex not added"
 
+# 2b) Browser-enforced network lockdown (CSP meta, first in <head> so it precedes every script).
+if grep -q 'Content-Security-Policy' "$dist/index.html"; then die "index.html already carries a CSP; review patch-build.sh"; fi
+python3 -I - "$dist/index.html" "$PR_PAGE_CSP" <<'PY'
+import sys
+path, csp = sys.argv[1], sys.argv[2]
+html = open(path, encoding="utf-8").read()
+anchor = '<meta charset="UTF-8" />'
+assert html.count(anchor) == 1, "charset anchor"
+html = html.replace(anchor, anchor + f'\n    <meta http-equiv="Content-Security-Policy" content="{csp}" />')
+open(path, "w", encoding="utf-8").write(html)
+PY
+grep -q 'http-equiv="Content-Security-Policy"' "$dist/index.html" || die "CSP not added"
+
 # 3) Separate localStorage. All of github.io shares ONE origin, so the shared Preview, production and this
 #    page would otherwise share every key. Each storage key is a string literal in the bundle; the script
 #    renames EVERY teto-/teto. literal to "<key>--<slug>" and FAILS on a literal it does not know, so a key

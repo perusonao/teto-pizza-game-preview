@@ -157,6 +157,16 @@ jobs:
           name: pr-page-dist
           path: ${{ runner.temp }}/dist-pr
 
+      - name: Re-validate the PR head right before publishing (it may have changed during the build)
+        if: inputs.action == 'deploy'
+        env:
+          ACTION: ${{ inputs.action }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          SHA: ${{ inputs.sha }}
+          CONFIRM: ${{ inputs.confirm }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/pr-pages/validate-inputs.sh
+
       - name: Preflight - the live shared Preview must already equal site/ on main
         run: bash .github/scripts/pr-pages/check-root-synced.sh
 
@@ -170,7 +180,7 @@ jobs:
           ACTION: ${{ inputs.action }}
           PR_NUMBER: ${{ inputs.pr_number }}
           SHA: ${{ inputs.sha }}
-          RUN_ID: ${{ github.run_id }}
+          RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
           DIST: ${{ runner.temp }}/dist-pr
         run: |
           if [ "$ACTION" = deploy ]; then
@@ -204,6 +214,7 @@ jobs:
         if: steps.push.outputs.changed == 'true'
         env:
           ACTION: ${{ inputs.action }}
+          EXPECT_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
         run: bash .github/scripts/pr-pages/verify-live.sh "$ACTION" "$SLUG"
 
       - name: Roll back a failed deploy (only if our commit is still the tip of main)
