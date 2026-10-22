@@ -181,7 +181,7 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: pr-preview-final-${{ github.run_id }}
-          path: site
+          path: finalized-site   # an empty directory: the checkout above holds the shared Preview in site/, which must never be mixed in
 
       - name: Install the pinned Wrangler (lockfile, no install scripts)
         working-directory: pr-preview/wrangler
@@ -190,7 +190,7 @@ jobs:
       - name: Guard (target, tree, credentials present, clean working directory)
         id: guard
         env:
-          SITE_DIR: site
+          SITE_DIR: finalized-site
           SHA: ${{ needs.build.outputs.sha }}
           PR: ${{ needs.build.outputs.pr }}
           BRANCH: ${{ needs.build.outputs.branch }}
@@ -213,7 +213,7 @@ jobs:
           PR: ${{ needs.build.outputs.pr }}
         run: |
           set -o pipefail
-          ./node_modules/.bin/wrangler pages deploy "$GITHUB_WORKSPACE/site" \
+          ./node_modules/.bin/wrangler pages deploy "$GITHUB_WORKSPACE/finalized-site" \
             --project-name "$CF_PROJECT" \
             --branch "$CF_BRANCH" \
             --commit-hash "$SHA" \

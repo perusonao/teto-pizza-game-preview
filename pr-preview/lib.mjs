@@ -3,6 +3,7 @@
 //
 // Nothing here talks to Cloudflare. The same checks run three times: on the dispatch inputs (validate-inputs),
 // on the built tree before anyone is asked to approve (finalize), and again in the deploy job after approval (guard-deploy).
+import { createHash } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
@@ -163,6 +164,16 @@ export function checkTree(dir, { allowHeaders = false } = {}) {
   return files;
 }
 
+export const sha256 = (buffer) => createHash("sha256").update(buffer).digest("hex");
+
+/** Every published file except preview-info.json itself, with its hash: what finalize wrote, and nothing else, may be published. */
+export function manifestOf(dir) {
+  return listTree(dir)
+    .filter((f) => f.rel !== "preview-info.json")
+    .map((f) => ({ path: f.rel, bytes: f.size, sha256: sha256(readFileSync(f.abs)) }))
+    .sort((a, b) => (a.path < b.path ? -1 : 1));
+}
+
 /** The finished tree must be exactly what the pipeline intends to publish. */
 export function checkFinalTree(dir, expect) {
   const files = checkTree(dir, { allowHeaders: true });
@@ -184,5 +195,17 @@ export function checkFinalTree(dir, expect) {
   if (String(info.pr) !== String(expect.pr)) fail("preview-info.json pr mismatch");
   if (info.branch !== expect.branch) fail("preview-info.json branch mismatch");
   if (typeof info.firebase !== "string" || !info.firebase.startsWith("disabled")) fail("preview-info.json must state that Firebase is disabled");
+  // Exact membership: a file that finalize did not write (for example the shared Preview's tracked site/ left in the directory the artifact
+  // was downloaded into), a missing file, or a changed file is refused.
+  if (!Array.isArray(info.files) || info.files.length === 0) fail("preview-info.json has no file list");
+  const actual = manifestOf(dir);
+  const want = new Map(info.files.map((f) => [f.path, f]));
+  if (want.size !== info.files.length) fail("preview-info.json lists a file twice");
+  for (const f of actual) {
+    const w = want.get(f.path);
+    if (!w) fail(`file not written by finalize (not in preview-info.json): ${f.path}`);
+    if (w.sha256 !== f.sha256 || w.bytes !== f.bytes) fail(`file differs from what finalize wrote: ${f.path}`);
+  }
+  for (const w of want.keys()) if (!actual.some((f) => f.path === w)) fail(`file listed in preview-info.json is missing: ${w}`);
   return files;
 }

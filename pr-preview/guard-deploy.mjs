@@ -1,5 +1,6 @@
 // Job 3 (after Environment approval), immediately before `wrangler pages deploy`: re-check everything about the tree and the target.
 // Prints project= / branch= to GITHUB_OUTPUT so the deploy step takes them from here, not from the dispatch inputs.
+import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,6 +13,20 @@ export function checkWorkingDirectory(cwd) {
   }
 }
 
+/**
+ * The directory that is published must not be (or sit inside) a directory tracked by git: in the deploy job the checkout holds the shared
+ * Preview's site/, and downloading the artifact into it would publish both. Outside a git work tree there is nothing tracked.
+ */
+export function assertNotTracked(dir, cwd = process.cwd()) {
+  let listed = "";
+  try {
+    listed = execFileSync("git", ["-C", cwd, "ls-files", "--", path.resolve(cwd, dir)], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  } catch {
+    return; // not a git work tree
+  }
+  if (listed.trim() !== "") fail(`${dir} contains files tracked by git (the shared Preview?); the finalized tree must be downloaded into an empty directory`);
+}
+
 export function guardDeploy({ dir, sha, pr, branch, cwd, env = process.env }) {
   validateSha(sha);
   const b = validateBranch(branch);
@@ -22,6 +37,7 @@ export function guardDeploy({ dir, sha, pr, branch, cwd, env = process.env }) {
     if (!env[secret]) fail(`${secret} is not set (is the cloudflare-preview Environment configured with its secrets?)`);
   }
   checkWorkingDirectory(cwd);
+  assertNotTracked(dir, env.GITHUB_WORKSPACE ?? process.cwd());
   const files = checkFinalTree(dir, { sha, pr, branch: b });
   return { project: PROJECT_NAME, branch: b, files: files.length };
 }

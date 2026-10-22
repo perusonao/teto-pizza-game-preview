@@ -37,7 +37,7 @@ URL（Job Summary に出ます。Issue に記録してください）:
 3. `deploy` job は `deploy == true` かつ `refs/heads/main` かつ本 repo のときだけ実行され、Environment の承認が必要。
 4. Cloudflare のプロジェクト名（`teto-pizza-pr-preview`）と production ブランチ名（`production-disabled`）は `pr-preview/lib.mjs` の定数。入力からは取らない。ブランチは `pr-<n>[-<label>]`（28 文字以内）のみで、`production-disabled` や `main` は拒否。
 5. secrets は `deploy` job だけ（テストで固定）。PR のコードを実行する `build` job には渡さない（`GITHUB_TOKEN` の読み取り専用 1 ステップを除く）。
-6. `deploy` job は PR のコードを実行しない。ビルド出力は `finalize` で作り直した木だけを使い、デプロイ直前に全項目を再検査する。
+6. `deploy` job は PR のコードを実行しない。ビルド出力は `finalize` で作り直した木だけを使い、デプロイ直前に全項目を再検査する。成果物は**空のディレクトリ**（`finalized-site/`）にダウンロードし（チェックアウトに含まれる共有 Preview の `site/` とは混ぜない）、ガードは「git 管理下のファイルを含むディレクトリ」を拒否し、公開物が `preview-info.json` の `files`（finalize が書いた全ファイルと SHA-256）と**完全に一致**することを確認する（余分・欠落・変更はすべて拒否）。
 7. 全 action は commit SHA で固定。入力は `env` 経由のみ（シェル行に `${{ }}` を埋め込まない。テストで固定）。
 8. 作業ディレクトリに `functions/`、`_worker.js`、wrangler 設定がないことを確認（Wrangler がそれらを実行してしまうのを防ぐ）。
 

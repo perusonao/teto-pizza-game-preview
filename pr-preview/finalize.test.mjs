@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, symlinkSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
 import { GuardError, HEADERS_FILE, NOINDEX_META, checkFinalTree } from "./lib.mjs";
@@ -24,7 +24,10 @@ test("a Preview build is finalized: manifest at the root, noindex, headers, prev
   assert.equal(read("index.html").split(NOINDEX_META).length, 2);
   assert.equal(read("_headers"), HEADERS_FILE);
   assert.deepEqual(JSON.parse(read("preview-info.json")), info);
-  assert.deepEqual(info, {
+  const { files, ...rest } = info;
+  assert.deepEqual(files.map((f) => f.path), ["_headers", "assets/index-abc.css", "assets/index-abc.js", "icons/icon-16.png", "index.html", "manifest.webmanifest"]);
+  for (const f of files) assert.match(f.sha256, /^[0-9a-f]{64}$/);
+  assert.deepEqual(rest, {
     schema: 1,
     sourceRepo: "perusonao/teto-pizza-game",
     ref: SHA,
@@ -114,7 +117,22 @@ test("a tampered final tree fails the check that runs again before deploy", () =
   tamper("manifest.webmanifest", "", (m) => m.replace('"scope": "/"', '"scope": "/x/"'));
   tamper("preview-info.json", "", (j) => j.replaceAll(SHA, "1".repeat(40)));
   tamper("preview-info.json", "", (j) => j.replace("disabled", "enabled"));
+  tamper("assets/index-abc.js", "", (t) => `${t};//changed after finalize`); // same file name, different content
   put(outDir, "_worker.js", "export default {}");
   assert.throws(() => checkFinalTree(outDir, expect), GuardError);
   assert.ok(existsSync(path.join(outDir, "index.html")));
+});
+
+test("exact membership: a file that finalize did not write is refused, whatever its type (the shared Preview's site/ overlay)", () => {
+  const { outDir } = run();
+  const expect = { sha: SHA, pr: "618", branch: "pr-618" };
+  put(outDir, "assets/index-CcpGotdz.js", "old shared-preview bundle"); // an allowed type, but not in the manifest
+  assert.throws(() => checkFinalTree(outDir, expect), /not written by finalize/);
+  rmSync(path.join(outDir, "assets/index-CcpGotdz.js"));
+  put(outDir, "dm3r2-setup.html", "<html>helper page</html>");
+  assert.throws(() => checkFinalTree(outDir, expect), /not written by finalize/);
+  rmSync(path.join(outDir, "dm3r2-setup.html"));
+  checkFinalTree(outDir, expect);
+  rmSync(path.join(outDir, "assets/index-abc.css")); // a listed file that went missing
+  assert.throws(() => checkFinalTree(outDir, expect), /is missing/);
 });

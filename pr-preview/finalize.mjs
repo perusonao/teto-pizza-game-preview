@@ -4,7 +4,7 @@
 import { appendFileSync, copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { GuardError, HEADERS_FILE, NOINDEX_META, SOURCE_REPO, assertNoFirebaseEnv, checkFinalTree, checkTree, fail, parseJson, validateBranch, validateSha } from "./lib.mjs";
+import { GuardError, HEADERS_FILE, NOINDEX_META, SOURCE_REPO, assertNoFirebaseEnv, checkFinalTree, checkTree, fail, manifestOf, parseJson, validateBranch, validateSha } from "./lib.mjs";
 
 const CHARSET_META = /<meta charset="UTF-8"\s*\/?>/i;
 
@@ -61,6 +61,7 @@ export function finalize({ inDir, outDir, sha, pr, label = "", branch, ref, runU
     workflowRunUrl: runUrl,
     firebase: "disabled (no VITE_FIREBASE_* at build)",
     freeFinishOptIn: "append ?freeFinish=on to the URL (Preview only; applies to that page load)",
+    files: manifestOf(outDir),
   };
   write("preview-info.json", `${JSON.stringify(info, null, 2)}\n`);
   const result = checkFinalTree(outDir, { sha, pr, branch });

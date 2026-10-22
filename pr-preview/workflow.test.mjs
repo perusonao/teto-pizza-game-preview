@@ -115,7 +115,7 @@ test("wrangler is pinned, installed from the lockfile without scripts, and run f
   assert.match(lock.packages["node_modules/wrangler"].integrity, /^sha512-/);
   assert.match(J.deploy, /working-directory: pr-preview\/wrangler\n\s+run: npm ci --ignore-scripts/);
   assert.ok(!/npx wrangler|wrangler@/.test(code), "no unpinned wrangler");
-  assert.match(J.deploy, /\.\/node_modules\/\.bin\/wrangler pages deploy "\$GITHUB_WORKSPACE\/site"/);
+  assert.match(J.deploy, /\.\/node_modules\/\.bin\/wrangler pages deploy "\$GITHUB_WORKSPACE\/finalized-site"/);
   assert.match(J.deploy, /name: Deploy \(Direct Upload\)\n\s+id: wrangler\n\s+working-directory: pr-preview\/wrangler/);
 });
 
@@ -130,7 +130,20 @@ test("project and branch come from the guard step, never from the inputs", () =>
 });
 
 test("the shared Preview's files are not referenced", () => {
-  assert.ok(!/site\//.test(code.replace(/\$GITHUB_WORKSPACE\/site/g, "").replace(/path: site/g, "")), "no use of the shared Preview's site/ directory");
+  const bare = code.replace(/\s+#.*$/gm, "").replace(/finalized-site/g, "");
+  assert.ok(!/\bsite\b/.test(bare), "no use of the shared Preview's site/ directory");
   assert.ok(!/git (push|commit)/.test(code), "this workflow commits nothing");
   assert.ok(!/pages\.yml|deploy-from-source/.test(code));
+});
+
+test("the finalized artifact is downloaded into an empty directory, never into a tracked one (shared Preview's site/)", () => {
+  const download = J.deploy.match(/actions\/download-artifact@[0-9a-f]{40}[^\n]*\n\s+with:\n\s+name: pr-preview-final-[^\n]+\n\s+path: (\S+)/);
+  assert.ok(download, "deploy job downloads the finalized artifact");
+  const dir = download[1];
+  for (const tracked of ["site", "pr-preview", ".github", "."]) assert.notEqual(dir, tracked);
+  assert.match(J.deploy, new RegExp(`SITE_DIR: ${dir}\\n`));
+  assert.ok(J.deploy.includes(`wrangler pages deploy "$GITHUB_WORKSPACE/${dir}"`), "Wrangler publishes the same directory the guard checked");
+  // no step anywhere downloads into, uploads from, or deploys the tracked site/ directory
+  assert.ok(!/path: site\s*(#.*)?\n/.test(code));
+  assert.ok(!/GITHUB_WORKSPACE\/site\b/.test(code));
 });

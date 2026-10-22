@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import { test } from "node:test";
-import { GuardError, PROJECT_NAME } from "./lib.mjs";
+import { readFileSync } from "node:fs";
+import { GuardError, PROJECT_NAME, checkFinalTree } from "./lib.mjs";
 import { finalize } from "./finalize.mjs";
-import { checkWorkingDirectory, guardDeploy } from "./guard-deploy.mjs";
+import { execFileSync } from "node:child_process";
+import { assertNotTracked, checkWorkingDirectory, guardDeploy } from "./guard-deploy.mjs";
 import { SHA, fakeBuild, put, tmp } from "./testSupport.mjs";
 
 const ENV = { GITHUB_REPOSITORY: "perusonao/teto-pizza-game-preview", GITHUB_REF: "refs/heads/main", CLOUDFLARE_API_TOKEN: "t", CLOUDFLARE_ACCOUNT_ID: "a" };
@@ -59,4 +61,37 @@ test("the working directory must not hold functions / worker / wrangler config",
     rejects(args(dir, { cwd }));
   }
   checkWorkingDirectory(tmp("clean-"));
+});
+
+test("the directory to publish must not hold git-tracked files (the checkout's site/ is the shared Preview)", () => {
+  const repo = tmp("repo-");
+  const git = (...a) => execFileSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { stdio: "ignore" });
+  git("init", "-q");
+  put(repo, "site/index.html", "shared preview");
+  put(repo, "site/assets/index-OLD.js", "old bundle");
+  git("add", "-A");
+  git("commit", "-q", "-m", "x");
+  put(repo, "finalized-site/index.html", "untracked, as downloaded");
+  assertNotTracked("finalized-site", repo); // fine: nothing tracked there
+  assert.throws(() => assertNotTracked("site", repo), GuardError); // the shared Preview directory
+  assert.throws(() => assertNotTracked(".", repo), GuardError); // a parent of it
+  assertNotTracked(tmp("not-a-repo-"), repo); // outside the work tree
+});
+
+test("downloading the artifact on top of the shared Preview's files is caught end to end", () => {
+  const repo = tmp("repo-");
+  const git = (...a) => execFileSync("git", ["-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { stdio: "ignore" });
+  git("init", "-q");
+  put(repo, "site/assets/index-CcpGotdz.js", "old shared bundle");
+  git("add", "-A");
+  git("commit", "-q", "-m", "x");
+  const final = site();
+  const target = path.join(repo, "site"); // the mistake: extract into the tracked directory
+  for (const rel of ["index.html", "manifest.webmanifest", "preview-info.json", "_headers", "assets/index-abc.js", "assets/index-abc.css", "icons/icon-16.png"]) {
+    put(target, rel, readFileSync(path.join(final, rel)));
+  }
+  const env = { ...ENV, GITHUB_WORKSPACE: repo };
+  const a = { dir: target, sha: SHA, pr: "618", branch: "pr-618", cwd: tmp("cwd-"), env };
+  assert.throws(() => guardDeploy(a), GuardError); // refused as tracked, and also because of the extra bundle
+  assert.throws(() => checkFinalTree(target, { sha: SHA, pr: "618", branch: "pr-618" }), /not written by finalize/);
 });
