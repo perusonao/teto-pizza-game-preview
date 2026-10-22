@@ -1,0 +1,242 @@
+name: Deploy PR preview (Cloudflare Pages)
+
+# Per-PR / per-verification Preview on its own origin (Cloudflare Pages, Direct Upload). Phase 1B of the Preview design:
+#   docs/reports/TETO_PHASE-1B_PER-PR-PREVIEW_Fresh-Audit.md and ..._CLOUDFLARE-PREVIEW_Phase1-Implementation-Plan.md in perusonao/teto-pizza-game.
+# Operating notes and the Owner's one-time setup: pr-preview/README.md.
+#
+# This workflow does NOT touch the shared Preview (deploy-from-source.yml / pages.yml / site/).
+#
+# Safety model
+#   - workflow_dispatch only. No pull_request, pull_request_target, workflow_run, issue_comment or schedule trigger.
+#   - `deploy` defaults to false: a dispatch with the default builds and checks the tree but never reaches Cloudflare.
+#   - build job  : runs the PR's code (npm ci / vite build). NO secrets (its token is the read-only GITHUB_TOKEN, passed to one verification step only).
+#   - finalize   : trusted scripts from this repository turn the untrusted build output into the exact tree to publish. NO secrets.
+#   - deploy job : the only job that sees Cloudflare credentials. It needs the `cloudflare-preview` Environment (required reviewer = Owner;
+#                  deployment branches = main only), runs only from refs/heads/main, never executes the PR's code, and re-checks the tree.
+#   - the Cloudflare project and its production branch are constants in pr-preview/lib.mjs; they are never taken from the inputs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag or commit SHA of perusonao/teto-pizza-game to build (use the exact commit SHA for an HV)"
+        required: true
+        type: string
+      pr_number:
+        description: "Pull request number this build belongs to (digits). 0 = smoke test of a commit already on main (label must be 'smoke')"
+        required: true
+        type: string
+      label:
+        description: "Optional verification-target label ([a-z0-9-], max 16 chars). Cloudflare branch becomes pr-<n>-<label>"
+        required: false
+        default: ""
+        type: string
+      deploy:
+        description: "false = build and check only (no Cloudflare access). true = also deploy after the Environment approval"
+        required: false
+        default: false
+        type: boolean
+
+permissions: {}
+
+concurrency:
+  group: pr-preview-${{ inputs.pr_number }}-${{ inputs.label }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build (no secrets)
+    runs-on: ubuntu-latest
+    if: github.repository == 'perusonao/teto-pizza-game-preview'
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.verify.outputs.sha }}
+      short: ${{ steps.verify.outputs.short }}
+      pr: ${{ steps.inputs.outputs.pr }}
+      label: ${{ steps.inputs.outputs.label }}
+      branch: ${{ steps.inputs.outputs.branch }}
+      ref: ${{ steps.inputs.outputs.ref }}
+    steps:
+      - name: Checkout this repository (trusted scripts)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          path: tools
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      - name: Validate the dispatch inputs
+        id: inputs
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+          INPUT_PR_NUMBER: ${{ inputs.pr_number }}
+          INPUT_LABEL: ${{ inputs.label }}
+        run: node tools/pr-preview/validate-inputs.mjs
+
+      - name: Checkout the source (no install, nothing executed yet)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          repository: perusonao/teto-pizza-game
+          ref: ${{ steps.inputs.outputs.ref }}
+          path: source
+          persist-credentials: false
+
+      - name: Verify the commit belongs to the PR, and the tree carries no env files
+        id: verify
+        env:
+          PR_NUMBER: ${{ steps.inputs.outputs.pr }}
+          BRANCH: ${{ steps.inputs.outputs.branch }}
+          GH_TOKEN: ${{ github.token }}
+        run: node tools/pr-preview/verify-source.mjs source
+
+      - name: Install the source's dependencies
+        working-directory: source
+        run: npm ci
+
+      - name: Build (Preview mode, root origin, no Firebase configuration)
+        working-directory: source
+        env:
+          VITE_PREVIEW_MODE: "1"
+          VITE_PREVIEW_PR: ${{ steps.inputs.outputs.pr }}
+          VITE_PREVIEW_SHA: ${{ steps.verify.outputs.short }}
+        run: npx vite build --base=/ --outDir ../dist-raw --emptyOutDir
+
+      - name: Upload the raw build output
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pr-preview-raw-${{ github.run_id }}
+          path: dist-raw
+          if-no-files-found: error
+          retention-days: 3
+
+  finalize:
+    name: Finalize and check the tree (no secrets)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout this repository (trusted scripts)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      - name: Download the raw build output
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: pr-preview-raw-${{ github.run_id }}
+          path: dist-raw
+
+      - name: Allowlist, rewrite manifest, add noindex / _headers / preview-info.json, check
+        env:
+          IN_DIR: dist-raw
+          OUT_DIR: dist-final
+          SHA: ${{ needs.build.outputs.sha }}
+          PR: ${{ needs.build.outputs.pr }}
+          LABEL: ${{ needs.build.outputs.label }}
+          BRANCH: ${{ needs.build.outputs.branch }}
+          REF: ${{ needs.build.outputs.ref }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node pr-preview/finalize.mjs
+
+      - name: Upload the tree that may be published
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: pr-preview-final-${{ github.run_id }}
+          path: dist-final
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy:
+    name: Deploy to Cloudflare Pages (Environment approval)
+    needs: [build, finalize]
+    # Never reached with the default `deploy: false`, and only ever from main (the Environment's deployment-branch rule says the same).
+    if: ${{ inputs.deploy == true && github.ref == 'refs/heads/main' && github.repository == 'perusonao/teto-pizza-game-preview' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: cloudflare-preview
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout this repository (trusted scripts and the pinned Wrangler lock)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      - name: Download the finalized tree
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: pr-preview-final-${{ github.run_id }}
+          path: finalized-site   # an empty directory: the checkout above holds the shared Preview in site/, which must never be mixed in
+
+      - name: Install the pinned Wrangler (lockfile, no install scripts)
+        working-directory: pr-preview/wrangler
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Guard (target, tree, credentials present, clean working directory)
+        id: guard
+        env:
+          SITE_DIR: finalized-site
+          SHA: ${{ needs.build.outputs.sha }}
+          PR: ${{ needs.build.outputs.pr }}
+          BRANCH: ${{ needs.build.outputs.branch }}
+          DEPLOY_CWD: pr-preview/wrangler
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: node pr-preview/guard-deploy.mjs
+
+      - name: Deploy (Direct Upload)
+        id: wrangler
+        working-directory: pr-preview/wrangler
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          WRANGLER_SEND_METRICS: "false"
+          CF_PROJECT: ${{ steps.guard.outputs.project }}
+          CF_BRANCH: ${{ steps.guard.outputs.branch }}
+          SHA: ${{ needs.build.outputs.sha }}
+          SHORT: ${{ needs.build.outputs.short }}
+          PR: ${{ needs.build.outputs.pr }}
+        run: |
+          set -o pipefail
+          ./node_modules/.bin/wrangler pages deploy "$GITHUB_WORKSPACE/finalized-site" \
+            --project-name "$CF_PROJECT" \
+            --branch "$CF_BRANCH" \
+            --commit-hash "$SHA" \
+            --commit-message "PR #$PR $SHORT" \
+            --commit-dirty=true 2>&1 | tee "$RUNNER_TEMP/wrangler.log"
+
+      - name: Summary (URLs to record on the Issue)
+        env:
+          CF_PROJECT: ${{ steps.guard.outputs.project }}
+          CF_BRANCH: ${{ steps.guard.outputs.branch }}
+          SHA: ${{ needs.build.outputs.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          unique="$(grep -Eo "https://[a-f0-9]+\.${CF_PROJECT}\.pages\.dev" "$RUNNER_TEMP/wrangler.log" | head -n 1 || true)"
+          {
+            echo "### Preview deployed"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| PR alias (stable per branch) | https://${CF_BRANCH}.${CF_PROJECT}.pages.dev |"
+            echo "| Deployment-specific URL | ${unique:-"(not found in the Wrangler output; see the Cloudflare dashboard)"} |"
+            echo "| Commit | \`${SHA}\` |"
+            echo "| Run | ${RUN_URL} |"
+            echo
+            echo "Add \`?freeFinish=on\` for Free Cooking FINISH. Record these URLs and the commit on the Issue."
+          } >> "$GITHUB_STEP_SUMMARY"
