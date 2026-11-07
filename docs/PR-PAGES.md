@@ -25,6 +25,27 @@ the same slug cannot pass) and checks that the shared Preview root is byte-ident
 and waits for the URL to return 404. Open the page in a normal Safari tab (not "Add to Home Screen").
 The PREVIEW badge must read `PR#<number> · <sha7>`.
 
+## Verification-only add-on commit (`source_sha`, optional)
+
+Some verification needs a commit that must **not** be part of the PR (e.g. the Batch 19 HV save seed, which must not change the PR head).
+Leave `source_sha` empty to publish the PR head itself (unchanged behaviour). To publish an add-on, give its FULL SHA in `source_sha`:
+
+| input | value |
+|---|---|
+| sha | still the PR's **current head** (must be an open same-repo PR by an allow-listed author, as before) |
+| source_sha | full 40-hex SHA of a later commit of the same repo |
+| confirm | `pr-<number>-<first 7 of source_sha>` (the slug follows the commit that is built) |
+
+`validate-inputs.sh` accepts `source_sha` only if the compare API says it is **strictly ahead** of the PR head (so the head is its ancestor),
+by 1-20 commits, and **every file it changes relative to the PR head is under `src/preview/` or `docs/`** (also checked for renames; 300+ files are
+refused because the API list may be truncated). No `package.json`, workflow, game-logic or save-logic change can ride along. The page gets its
+own slug, so it never replaces the page of the PR head. `preview-meta.json` records both `sha` (built) and `prHeadSha` (validated against).
+The same checks run again right before the write-capable publish step.
+
+Example (Batch 19, PR #783 head `abb3da5a1021b160b2ee75acbe5a00866a8a0eaf`, add-on `8137dc3ba61d636d777b05596b8866f5a74a9d03`):
+`action=deploy pr_number=783 sha=abb3da5a1021b160b2ee75acbe5a00866a8a0eaf source_sha=8137dc3ba61d636d777b05596b8866f5a74a9d03 confirm=pr-783-8137dc3`
+-> `https://perusonao.github.io/teto-pizza-game-preview/pr/pr-783-8137dc3/?hv=b19-pesto-burrata` (and `?hv=b19-crudaiola`).
+
 ## Layout and coexistence
 
 ```

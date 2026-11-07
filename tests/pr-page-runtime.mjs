@@ -1,11 +1,16 @@
 // Runtime check of a PATCHED PR page next to the shared Preview, in one browser origin.
 //   ORIGIN=http://127.0.0.1:8765 SLUG=pr-494-a3d1872 PLAYWRIGHT=/path/to/playwright-core/index.mjs \
 //     node tests/pr-page-runtime.mjs
+// Optional: HV=<scenario> (default "normal"; e.g. b19-pesto-burrata), PR_NUMBER (default 494), SHA7 (default a3d1872) -- the page the
+// slug names, so a source_sha add-on page (slug pr-<N>-<source sha7>) is checked against ITS badge.
 // Serve a tree where /teto-pizza-game-preview/ is the assembled Pages root (site/ + pr/<slug>/).
 // Needs playwright-core + a Chromium; exits non-zero on any failed assertion.
 const { chromium } = await import(process.env.PLAYWRIGHT ?? "playwright-core");
 const ORIGIN = process.env.ORIGIN ?? "http://127.0.0.1:8765";
 const SLUG = process.env.SLUG ?? "pr-494-a3d1872";
+const HV = process.env.HV ?? "normal";
+const PR_NUMBER = process.env.PR_NUMBER ?? "494";
+const SHA7 = process.env.SHA7 ?? "a3d1872";
 const ROOT = "/teto-pizza-game-preview/";
 const PAGE = `${ROOT}pr/${SLUG}/`;
 const SAVE = "teto-pizza-preview-save-v1";
@@ -40,7 +45,7 @@ await shared.close();
 const page = await ctx.newPage();
 const errors = [];
 page.on("pageerror", (e) => errors.push(String(e)));
-await page.goto(`${ORIGIN}${PAGE}?hv=normal`);
+await page.goto(`${ORIGIN}${PAGE}?hv=${HV}`);
 await page.waitForTimeout(1500);
 let ls = await dump(page);
 const own = `${SAVE}--${SLUG}`;
@@ -52,7 +57,7 @@ for (const [k, v] of Object.entries(marks)) check(`untouched: ${k}`, ls[k] === v
 check("PR page did not read the shared cheese opt-in", !(`${CHEESE}--${SLUG}` in ls));
 check("no page errors", errors.length === 0, errors.join(" | "));
 const badge = await page.locator(".preview-badge").first().textContent().catch(() => null);
-check("badge shows PR#494 and the short SHA", /PR#494/.test(badge ?? "") && /a3d1872/.test(badge ?? ""), String(badge));
+check(`badge shows PR#${PR_NUMBER} and the short SHA`, new RegExp(`PR#${PR_NUMBER}`).test(badge ?? "") && badge.includes(SHA7), String(badge));
 
 // 3) it really is the page's persistence: change state through the UI, reload, still there
 const before = ls[own];
@@ -72,7 +77,8 @@ check("shared cheese key unchanged", ls[CHEESE] === "1");
 await page.goto(`${ORIGIN}${PAGE}?cheeseCanvas=0`);
 await page.waitForTimeout(800);
 ls = await dump(page);
-check("?cheeseCanvas=0 removed only the page-scoped key", !(`${CHEESE}--${SLUG}` in ls) && ls[CHEESE] === "1");
+// (Since the source made Canvas the default, `?cheeseCanvas=0` REMEMBERS "0" in the key instead of removing it: assert the page-scoped value moved and the shared one did not.)
+check("?cheeseCanvas=0 changed only the page-scoped key (shared key still \"1\")", ls[`${CHEESE}--${SLUG}`] === "0" && ls[CHEESE] === "1", `page=${ls[`${CHEESE}--${SLUG}`]} shared=${ls[CHEESE]}`);
 
 // 4b) the CSP: nothing breaks on the main screens, and the BROWSER (not just the absence of a config) blocks
 //     any request to another origin -- Firebase, production endpoints, anything.
@@ -148,7 +154,7 @@ await root.waitForTimeout(800);
 ls = await dump(root);
 for (const [k, v] of Object.entries(marks)) check(`root view unchanged: ${k}`, ls[k] === v, `now=${ls[k]}`);
 const rbadge = await root.locator(".preview-badge").first().textContent().catch(() => null);
-check("shared Preview root badge is unchanged (not PR#494)", !/PR#494/.test(rbadge ?? ""), String(rbadge));
+check(`shared Preview root badge is unchanged (not PR#${PR_NUMBER})`, !new RegExp(`PR#${PR_NUMBER}`).test(rbadge ?? ""), String(rbadge));
 
 // 6) no request ever left localhost (blocked attempts above never reach the network): nothing can reach Firebase / production
 const unexpected = external.filter((u) => !u.includes("example.com/x")); // example.com/x = the sendBeacon probe above

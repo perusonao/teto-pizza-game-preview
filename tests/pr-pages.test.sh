@@ -38,6 +38,32 @@ expect_fail "deploy: slug with path traversal refused"  v deploy 494 "$SHA" "pr-
 expect_fail "deploy: empty action refused"              v ""
 pull "$T/pull.json" "$SHA" open perusonao/teto-pizza-game someone-else; expect_fail "deploy: PR by a non-allow-listed author refused" v deploy
 pull "$T/pull.json" "$SHA" open perusonao/teto-pizza-game perusonao;    expect_ok   "deploy: allow-listed author accepted" v deploy
+
+echo "validate-inputs: source_sha (a descendant of the PR head, verification-only add-on)"
+SRC=8137dc3bd5b1b1dc3b2cc8a0c2b8bbf1c2f3a4d5
+SRC_SLUG=pr-494-8137dc3
+cmp_json() { jq -n --arg st "${2:-ahead}" --argjson ahead "${3:-3}" --argjson behind "${4:-0}" --argjson files "$5" '{status:$st,ahead_by:$ahead,behind_by:$behind,files:$files}' > "$1"; }
+FILES_OK='[{"filename":"src/preview/b19HvSeeds.ts"},{"filename":"src/preview/hvSeeds.ts"},{"filename":"docs/reports/x.md"}]'
+vs() { ( export ACTION=deploy PR_NUMBER=494 SHA="$SHA" SOURCE_SHA="${1:-$SRC}" CONFIRM="${2:-$SRC_SLUG}" SOURCE_REPO=perusonao/teto-pizza-game PULL_JSON_FILE="$T/pull.json" COMPARE_JSON_FILE="$T/cmp.json"; bash "$S/validate-inputs.sh" ); }
+cmp_json "$T/cmp.json" ahead 3 0 "$FILES_OK"
+expect_ok   "source_sha: strictly ahead, only src/preview + docs changed, slug uses the source sha" vs
+expect_fail "source_sha: confirm must be the SOURCE slug, not the PR head slug" vs "$SRC" "$SLUG"
+expect_fail "source_sha: short sha refused"                vs 8137dc3 "$SRC_SLUG"
+expect_fail "source_sha: equal to the PR head refused"     vs "$SHA" "$SLUG"
+cmp_json "$T/cmp.json" diverged 3 2 "$FILES_OK";   expect_fail "source_sha: diverged branch refused" vs
+cmp_json "$T/cmp.json" behind 0 3 "$FILES_OK";     expect_fail "source_sha: behind the PR head refused" vs
+cmp_json "$T/cmp.json" identical 0 0 "$FILES_OK";  expect_fail "source_sha: identical refused" vs
+cmp_json "$T/cmp.json" ahead 21 0 "$FILES_OK";     expect_fail "source_sha: more than 20 commits ahead refused" vs
+cmp_json "$T/cmp.json" ahead 3 0 '[{"filename":"src/preview/b19HvSeeds.ts"},{"filename":"package.json"}]'; expect_fail "source_sha: package.json change refused" vs
+cmp_json "$T/cmp.json" ahead 3 0 '[{"filename":"src/state/persistence.ts"}]';  expect_fail "source_sha: game-logic change refused" vs
+cmp_json "$T/cmp.json" ahead 3 0 '[{"filename":".github/workflows/ci.yml"}]';  expect_fail "source_sha: workflow change refused" vs
+cmp_json "$T/cmp.json" ahead 3 0 '[{"filename":"src/preview/ok.ts","previous_filename":"src/App.tsx"}]'; expect_fail "source_sha: rename out of a forbidden path refused" vs
+cmp_json "$T/cmp.json" ahead 3 0 '[{"filename":"src/preview-evil/x.ts"}]';     expect_fail "source_sha: look-alike directory src/preview-evil refused" vs
+cmp_json "$T/cmp.json" ahead 3 0 "$(jq -n '[range(300)|{filename:"docs/a\(.).md"}]')"; expect_fail "source_sha: 300+ files (possibly truncated) refused" vs
+pull "$T/pull.json" bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb; cmp_json "$T/cmp.json" ahead 3 0 "$FILES_OK"; expect_fail "source_sha: the PR head must still be current" vs
+pull "$T/pull.json" "$SHA" open perusonao/teto-pizza-game someone-else;      expect_fail "source_sha: author allow-list still applies" vs
+pull "$T/pull.json"
+expect_ok   "source_sha empty: behaviour unchanged (PR head slug)" v deploy
 pull "$T/pull.json" "$SHA" open perusonao/teto-pizza-game someone-else; expect_ok   "deploy: author allow-list is configurable (ALLOWED_PR_AUTHORS)" env ALLOWED_PR_AUTHORS=a,someone-else,b bash -c 'ACTION=deploy PR_NUMBER=494 SHA='"$SHA"' CONFIRM='"$SLUG"' SOURCE_REPO=perusonao/teto-pizza-game PULL_JSON_FILE='"$T"'/pull.json bash '"$S"'/validate-inputs.sh'
 pull "$T/pull.json" "$SHA" open perusonao/teto-pizza-game perusonao
 echo "  -- the PR moved on during the build (re-validation before publish, same script)"

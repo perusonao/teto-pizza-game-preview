@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Applies a deploy/remove to the working tree and stages ONLY pr/<slug>/ .
 # usage: apply.sh deploy <slug> <dist-dir>   |   apply.sh remove <slug>
-# env (deploy): PR_NUMBER SHA RUN_ID  (written to pr/<slug>/preview-meta.json for audit)
+# env (deploy): PR_NUMBER SHA RUN_ID [PR_HEAD_SHA]  (written to pr/<slug>/preview-meta.json for audit; SHA = the commit that was built,
+#   PR_HEAD_SHA = the PR head it was validated against: they differ only for a source_sha add-on)
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 action="${1:?}"; slug="${2:?}"; valid_slug "$slug" || die "bad slug"
@@ -23,8 +24,8 @@ case "$action" in
     rm -rf -- "$target"
     mkdir -p -- "$target"
     cp -R "$dist"/. "$target"/
-    jq -n --arg pr "${PR_NUMBER:-}" --arg sha "${SHA:-}" --arg run "${RUN_ID:-}" --arg t "$(date -u +%FT%TZ)" \
-      '{source:"perusonao/teto-pizza-game",pr:$pr,sha:$sha,workflowRun:$run,builtAt:$t}' > "$target/preview-meta.json"
+    jq -n --arg pr "${PR_NUMBER:-}" --arg sha "${SHA:-}" --arg head "${PR_HEAD_SHA:-${SHA:-}}" --arg run "${RUN_ID:-}" --arg t "$(date -u +%FT%TZ)" \
+      '{source:"perusonao/teto-pizza-game",pr:$pr,sha:$sha,prHeadSha:$head,workflowRun:$run,builtAt:$t}' > "$target/preview-meta.json"
     ;;
   remove)
     [[ -d "$target" ]] || die "no such PR page: ${target}"
