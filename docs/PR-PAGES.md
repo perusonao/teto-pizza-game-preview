@@ -21,7 +21,7 @@ Actions -> **Publish / remove a PR-scoped preview page** -> Run workflow (branch
 
 `deploy` builds the pinned commit, re-validates the PR head, publishes `pr/<slug>/`, re-deploys Pages, then polls the
 live page until its `preview-meta.json` carries **this run's id** (so a page left over from an earlier deploy of
-the same slug cannot pass) and checks that the shared Preview root is byte-identical to `site/index.html`. `remove` deletes `pr/<slug>/`
+the same slug cannot pass) and checks that the shared Preview (every file of `site/`) is byte-identical to `main`'s. `remove` deletes `pr/<slug>/`
 and waits for the URL to return 404. Open the page in a normal Safari tab (not "Add to Home Screen").
 The PREVIEW badge must read `PR#<number> · <sha7>`.
 
@@ -79,6 +79,12 @@ What this design does about it:
   the **browser** block fetch / XHR / WebSocket / EventSource to any other origin (Firestore, production
   endpoints, ...). It is a layer, not a wall: `navigator.sendBeacon` and top-level navigations are not covered
   (the runtime test reports the former as a known gap), and it cannot stop same-origin storage access;
+- **No second document, no worker.** The CSP lives in `index.html` only, and neither a Worker (a **Service Worker** included) nor a framed same-origin
+  document is governed by the creating page's `<meta>` policy, so each could read the shared origin's storage and send it out. Therefore the CSP says
+  `worker-src 'none'; frame-src 'none'; child-src 'none'`, `patch-build.sh` fails the build on any file type outside a short allow-list (so no other
+  HTML / SVG / XML document, no `.wasm`, nothing unknown) and on a bundle that constructs a `Worker` / `SharedWorker`, registers a service worker or
+  calls `importScripts`, and `tests/pr-page-runtime.mjs` proves in a real browser that a worker, a blob worker, a service-worker registration and a
+  frame are all blocked. (This closes the two Codex P1 findings on PR #2; it narrows the surface, it does not make the origin a sandbox.)
 - the page ships with no Firebase config (build job has no secrets), so the app never initialises Firebase.
 
 A truly isolated origin (a separate account/org Pages site or a custom domain) is the only complete answer. That
@@ -116,9 +122,10 @@ be previewed, do not use this workflow for them.
 - **No Firebase / production writes**: the build job has no secrets; it asserts no `VITE_FIREBASE_*` in the
   environment and no loadable `.env*` file in the source, so the app's Firebase config stays `null` (the SDK is
   never initialised). The runtime check records every request and requires none to leave localhost.
-- **Shared Preview already published**: before anything is pushed, `check-root-synced.sh` requires the **live**
-  root to equal `site/index.html` on `main`. `pages.yml` deploys all of `main`, so without this a dispatch could
-  also publish a pending shared-Preview update. It runs again after the publish.
+- **Shared Preview already published**: before anything is pushed, `check-root-synced.sh` requires **every tracked file of `site/`** (index.html,
+  manifest.webmanifest, icons, assets/) and the root URL to be **byte-identical live**. `pages.yml` deploys all of `main`, so without this a dispatch
+  could also publish a pending shared-Preview update -- including one that changes only the manifest, an icon or an unreferenced asset (Codex P2 on PR #2).
+  It runs again after the publish. Files that exist only live cannot be listed over HTTP; they can only come from a deployed `main`, which is not changed.
 - **Concurrency**: same group as `deploy-from-source.yml` (`cancel-in-progress: false`): never concurrently
   with a shared-Preview deploy or another PR-page job. GitHub keeps one queued run per group; a third
   dispatch replaces the queued one, so wait for a run to finish before dispatching again.

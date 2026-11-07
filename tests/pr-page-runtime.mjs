@@ -145,6 +145,30 @@ const { beacon, ...asserted } = probes;
 console.log(`      known gap (documented): navigator.sendBeacon -> ${beacon}`);
 check("fetch / XHR to Firestore, the production origin or any other origin is blocked by the browser", Object.values(asserted).every((v) => v === "blocked"), JSON.stringify(asserted));
 check("the blocks were reported as CSP connect-src violations", violations.filter((v) => v.startsWith("connect-src")).length >= 3, violations.join(" | "));
+// 4d) Codex P1 x2 on PR #2: a Worker (a Service Worker included) and a framed same-origin document are NOT governed by this page's <meta> CSP, so the page may create neither.
+{
+  const before = violations.length;
+  const wp = await page.evaluate(async () => {
+    const out = {};
+    // Chromium does not throw from the constructor: the blocked script fires `error` on the Worker object. A worker that really started would post a message.
+    const probe = (mk) => new Promise((res) => {
+      try { const w = mk(); w.onerror = () => res("blocked"); w.onmessage = () => res("created"); setTimeout(() => res("not-blocked"), 1200); } catch { res("blocked"); }
+    });
+    out.worker = await probe(() => new Worker(location.pathname + "assets/none.js"));
+    out.blobWorker = await probe(() => new Worker(URL.createObjectURL(new Blob(["postMessage(1)"]))));
+    try { await navigator.serviceWorker.register(location.pathname + "sw.js"); out.sw = "registered"; } catch { out.sw = "blocked"; }
+    const f = document.createElement("iframe"); f.src = location.pathname; document.body.appendChild(f);
+    await new Promise((r) => setTimeout(r, 800));
+    out.iframe = "attempted";
+    return out;
+  });
+  const fresh = violations.slice(before).map((v) => v.split(" ")[0]);
+  check("a Worker and a blob: Worker cannot be created from the page", wp.worker === "blocked" && wp.blobWorker === "blocked", JSON.stringify(wp));
+  check("a Service Worker cannot be registered from the page", wp.sw === "blocked", JSON.stringify(wp));
+  check("the browser reported worker-src and frame-src CSP violations", fresh.includes("worker-src") && fresh.includes("frame-src"), fresh.join(","));
+  const sws = await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length);
+  check("no Service Worker registration exists for this origin after the probe", sws === 0, String(sws));
+}
 violations.length = 0;
 
 // 5) the shared Preview root still works and still sees only its own keys

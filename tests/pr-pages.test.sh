@@ -178,12 +178,43 @@ mk; echo 'k="teto.dev.newThing"' >> "$T/d/assets/i.js"; expect_fail "patch: unkn
 mk; sed -i 's#<meta charset="UTF-8" />#<meta charset="UTF-8" /><meta http-equiv="Content-Security-Policy" content="x">#' "$T/d/index.html"; expect_fail "patch: refuses an index.html that already has a CSP" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; bash "$S/patch-build.sh" "$T/d" $SLUG >/dev/null; expect_fail "patch: refuses to run twice on the same dist" bash "$S/patch-build.sh" "$T/d" $SLUG
 
+echo "patch-build: other documents, workers (Codex P1 x2 on PR #2)"
+mk; printf '<!doctype html><script src="x.js"></script>' > "$T/d/escape.html"; expect_fail "patch: a SECOND HTML document in dist is refused (it would run without the CSP)" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; mkdir -p "$T/d/sub"; printf '<!doctype html>' > "$T/d/sub/index.html"; expect_fail "patch: a nested index.html is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<svg xmlns="http://www.w3.org/2000/svg"><script>1</script></svg>' > "$T/d/assets/x.svg"; expect_fail "patch: an SVG document is refused (scripts run when it is framed or opened)" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<x/>' > "$T/d/assets/x.xml"; expect_fail "patch: an XML document is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf 'x' > "$T/d/assets/x.HTM"; expect_fail "patch: .HTM (case-insensitive) is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf 'x' > "$T/d/assets/x.wasm"; expect_fail "patch: an unknown file type fails closed" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf 'x' > "$T/d/assets/noext"; expect_fail "patch: a file without an extension fails closed" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo 'const w=new Worker(URL.createObjectURL(b));' >> "$T/d/assets/i.js"; expect_fail "patch: new Worker( in the bundle is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo 'const w = new  SharedWorker ("w.js");' >> "$T/d/assets/i.js"; expect_fail "patch: new SharedWorker ( (spacing) is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo 'navigator.serviceWorker . register("/sw.js");' >> "$T/d/assets/i.js"; expect_fail "patch: a Service Worker registration is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo 'importScripts("x.js");' >> "$T/d/assets/i.js"; expect_fail "patch: importScripts( is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo 'const msg="Worker pool";const w2=networkWorker;' >> "$T/d/assets/i.js"; expect_ok "patch: the word Worker alone (no constructor) is not a false positive" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf 'png' > "$T/d/assets/a.png"; printf 'w' > "$T/d/assets/a.webp"; printf '{}' > "$T/d/assets/a.json"; printf 'f' > "$T/d/assets/a.woff2"; printf '.a{}' > "$T/d/assets/a.css"; expect_ok "patch: the file types of a real build (png/webp/json/woff2/css/js) pass" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; bash "$S/patch-build.sh" "$T/d" $SLUG >/dev/null
+for d in "worker-src 'none'" "frame-src 'none'" "child-src 'none'" "connect-src 'self'" "object-src 'none'"; do grep -qF "$d" "$T/d/index.html" && ok "patched CSP carries: $d" || bad "patched CSP is missing: $d"; done
+grep -qE "worker-src 'self'|blob:;? *(manifest|object|base)" "$T/d/index.html" && bad "CSP must not allow workers from self/blob" || ok "CSP no longer allows workers from 'self' or blob:"
+
 echo "live checks (local http server stands in for github.io)"
 LROOT="$T/live"; mkdir -p "$LROOT/teto-pizza-game-preview"; cp -R "$ROOT/site/." "$LROOT/teto-pizza-game-preview/"
 PORT=$((20000 + RANDOM % 20000)); ( cd "$LROOT" && exec python3 -m http.server $PORT --bind 127.0.0.1 >/dev/null 2>&1 ) & SRV=$!
 sleep 1; export LIVE_ORIGIN="http://127.0.0.1:$PORT" TRIES=2 INTERVAL=1
 cd "$ROOT"
-expect_ok   "check-root-synced: live root == site/index.html" bash "$S/check-root-synced.sh"
+expect_ok   "check-root-synced: whole live site/ == site/ on main" bash "$S/check-root-synced.sh"
+LM="$LROOT/teto-pizza-game-preview/manifest.webmanifest"; cp "$LM" "$T/manifest.bak"; echo "  " >> "$LM"
+expect_fail "check-root-synced (Codex P2): a pending change ONLY in manifest.webmanifest is refused" bash "$S/check-root-synced.sh"
+cp "$T/manifest.bak" "$LM"
+LI="$LROOT/teto-pizza-game-preview/icons/icon-32.png"; cp "$LI" "$T/icon.bak"; printf 'x' >> "$LI"
+expect_fail "check-root-synced (Codex P2): a pending change ONLY in an icon is refused" bash "$S/check-root-synced.sh"
+cp "$T/icon.bak" "$LI"
+LA="$(cd "$ROOT" && git ls-files site/assets | grep -v index- | head -1)"; LA="$LROOT/teto-pizza-game-preview/${LA#site/}"; cp "$LA" "$T/asset.bak"; printf '/*x*/' >> "$LA"
+expect_fail "check-root-synced (Codex P2): a pending change ONLY in an unreferenced asset is refused" bash "$S/check-root-synced.sh"
+cp "$T/asset.bak" "$LA"
+mv "$LA" "$T/asset.moved"
+expect_fail "check-root-synced: a tracked file missing on the live site is refused" bash "$S/check-root-synced.sh"
+mv "$T/asset.moved" "$LA"
+expect_ok   "check-root-synced: identical again after restoring the files" bash "$S/check-root-synced.sh"
 echo "<!-- drift -->" >> "$LROOT/teto-pizza-game-preview/index.html"
 expect_fail "check-root-synced: refuses when live root differs (pending shared update)" bash "$S/check-root-synced.sh"
 cp "$ROOT/site/index.html" "$LROOT/teto-pizza-game-preview/index.html"
