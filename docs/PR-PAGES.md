@@ -42,6 +42,9 @@ refused because the API list may be truncated). No `package.json`, workflow, gam
 own slug, so it never replaces the page of the PR head. `preview-meta.json` records both `sha` (built) and `prHeadSha` (validated against).
 The same checks run again right before the write-capable publish step.
 
+**`remove` needs the same `source_sha` as the `deploy` it undoes** (the slug, and therefore `confirm`, is derived from it): with `source_sha` empty the slug would be
+`pr-<number>-<first 7 of sha>` and the page of the add-on could not be removed. For `remove` the compare checks are not run (only the format of the inputs and the slug).
+
 Example (Batch 19, PR #783 head `abb3da5a1021b160b2ee75acbe5a00866a8a0eaf`, add-on `8137dc3ba61d636d777b05596b8866f5a74a9d03`):
 `action=deploy pr_number=783 sha=abb3da5a1021b160b2ee75acbe5a00866a8a0eaf source_sha=8137dc3ba61d636d777b05596b8866f5a74a9d03 confirm=pr-783-8137dc3`
 -> `https://perusonao.github.io/teto-pizza-game-preview/pr/pr-783-8137dc3/?hv=b19-pesto-burrata` (and `?hv=b19-crudaiola`).

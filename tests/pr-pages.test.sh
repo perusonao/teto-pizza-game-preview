@@ -64,6 +64,10 @@ pull "$T/pull.json" bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb; cmp_json "$T/cmp.j
 pull "$T/pull.json" "$SHA" open perusonao/teto-pizza-game someone-else;      expect_fail "source_sha: author allow-list still applies" vs
 pull "$T/pull.json"
 expect_ok   "source_sha empty: behaviour unchanged (PR head slug)" v deploy
+vr() { ( export ACTION=remove PR_NUMBER=494 SHA="$SHA" SOURCE_SHA="${1-}" CONFIRM="${2:-$SRC_SLUG}" SOURCE_REPO=perusonao/teto-pizza-game; bash "$S/validate-inputs.sh" ); }
+expect_ok   "remove: with the same source_sha the add-on slug is accepted" vr "$SRC" "$SRC_SLUG"
+expect_fail "remove: WITHOUT source_sha the add-on slug is refused (the slug would be the PR head's)" vr "" "$SRC_SLUG"
+expect_ok   "remove: without source_sha the PR head slug still works" vr "" "$SLUG"
 pull "$T/pull.json" "$SHA" open perusonao/teto-pizza-game someone-else; expect_ok   "deploy: author allow-list is configurable (ALLOWED_PR_AUTHORS)" env ALLOWED_PR_AUTHORS=a,someone-else,b bash -c 'ACTION=deploy PR_NUMBER=494 SHA='"$SHA"' CONFIRM='"$SLUG"' SOURCE_REPO=perusonao/teto-pizza-game PULL_JSON_FILE='"$T"'/pull.json bash '"$S"'/validate-inputs.sh'
 pull "$T/pull.json" "$SHA" open perusonao/teto-pizza-game perusonao
 echo "  -- the PR moved on during the build (re-validation before publish, same script)"
