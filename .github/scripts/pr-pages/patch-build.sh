@@ -24,32 +24,83 @@ grep -q '<meta charset="UTF-8" />' "$dist/index.html" || die "index.html charset
 sed -i 's#<meta charset="UTF-8" />#<meta charset="UTF-8" />\n    <meta name="robots" content="noindex, nofollow" />#' "$dist/index.html"
 grep -q 'name="robots" content="noindex, nofollow"' "$dist/index.html" || die "noindex not added"
 
-# 2b) Browser-enforced network lockdown. The CSP <meta> is inserted as the FIRST thing in <head> (not after some anchor), and the build FAILS if anything that
-#     can load or run content (script, link, style, img, iframe, object, embed, video/audio/source, base, form, svg) appears before it -- a parser-blocking script
-#     placed before the policy would run unrestricted (Codex P2 on PR #2). The charset declaration must still fall inside the first 1024 bytes.
+# 2b) Browser-enforced network lockdown. The CSP <meta> is inserted as the FIRST element of the real <head> start tag, found with an HTML PARSER (python's html.parser:
+#     comments, <script>/<style> text and attribute values are never mistaken for tags -- Codex P2 on PR #2, round 4), and the build FAILS if anything that can load or run
+#     content (script, link, style, img, iframe, object, embed, media, base, form, svg, input, a refresh meta) starts before it. The patched document is parsed AGAIN and must
+#     show the CSP meta as the first start tag after <head>, with nothing risky ahead of it; the charset must stay within the first 1024 bytes. An index.html with no explicit
+#     <head> start tag (an implicit head) is refused: the policy cannot be placed first in a head the author did not write. (Limit: this is html.parser's reading of the page, not a
+#     browser's; the real page is also checked in a real browser by tests/pr-page-runtime.mjs.)
 if grep -q 'Content-Security-Policy' "$dist/index.html"; then die "index.html already carries a CSP; review patch-build.sh"; fi
 python3 -I - "$dist/index.html" "$PR_PAGE_CSP" <<'PY' || die "could not place the CSP safely at the start of <head> (see above)"
 import re, sys
+from html.parser import HTMLParser
+
 path, csp = sys.argv[1], sys.argv[2]
 html = open(path, encoding="utf-8").read()
-heads = list(re.finditer(r"<head(?:\s[^>]*)?>", html, flags=re.I))
+RISKY = {"script", "link", "style", "img", "iframe", "frame", "object", "embed", "video", "audio", "source", "track", "base", "form", "svg", "input"}
+
+
+def fail(msg):
+    print(f"::error::{msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+class Scan(HTMLParser):
+    """Records every START TAG (name, attrs, absolute offset, end offset) in document order; comments / raw text are not tags."""
+
+    def __init__(self, text):
+        super().__init__(convert_charrefs=False)
+        self.text = text
+        self.starts = [0]
+        for m in re.finditer("\n", text):
+            self.starts.append(m.end())
+        self.tags = []
+
+    def handle_starttag(self, tag, attrs):
+        line, col = self.getpos()
+        at = self.starts[line - 1] + col
+        raw = self.get_starttag_text() or ""
+        self.tags.append((tag.lower(), dict((k.lower(), v) for k, v in attrs), at, at + len(raw)))
+
+    handle_startendtag = handle_starttag
+
+
+def scan(text):
+    sc = Scan(text)
+    sc.feed(text)
+    sc.close()
+    return sc.tags
+
+
+def risky(tag, attrs):
+    return tag in RISKY or (tag == "meta" and "refresh" in (attrs.get("http-equiv") or "").lower())
+
+
+tags = scan(html)
+heads = [t for t in tags if t[0] == "head"]
 if len(heads) != 1:
-    print(f"::error::expected exactly one <head> tag, found {len(heads)}", file=sys.stderr); sys.exit(1)
-RISKY = re.compile(r"<\s*(script|link|style|img|iframe|frame|object|embed|video|audio|source|track|base|form|svg|input|meta\s+http-equiv\s*=\s*[\"']?refresh)\b", re.I)
-before = html[: heads[0].end()]
-m = RISKY.search(before)
-if m:
-    print(f"::error::executable / loading content ({m.group(0)}) comes before <head>, i.e. before the CSP can apply", file=sys.stderr); sys.exit(1)
-tag = f'\n    <meta http-equiv="Content-Security-Policy" content="{csp}" />'
-html = html[: heads[0].end()] + tag + html[heads[0].end():]
-csp_at = html.index("Content-Security-Policy")
-m = RISKY.search(html)
-if m and m.start() < csp_at:
-    print(f"::error::{m.group(0)} still precedes the CSP", file=sys.stderr); sys.exit(1)
-cs = re.search(r"<meta\s+charset\s*=", html, flags=re.I)
+    fail(f"expected exactly one explicit <head> start tag, found {len(heads)} (comments and raw text are not counted)")
+head_at, head_end = heads[0][2], heads[0][3]
+ahead = [t for t in tags if t[2] < head_at and risky(t[0], t[1])]
+if ahead:
+    fail(f"executable / loading content (<{ahead[0][0]}>) starts before <head>, i.e. before the CSP can apply")
+meta = f'\n    <meta http-equiv="Content-Security-Policy" content="{csp}" />'
+patched = html[:head_end] + meta + html[head_end:]
+# verify with a second parse of the PATCHED document
+ptags = scan(patched)
+ph = [t for t in ptags if t[0] == "head"]
+if len(ph) != 1:
+    fail("after patching, the document no longer has exactly one <head> start tag")
+after = [t for t in ptags if t[2] >= ph[0][3]]
+first = after[0] if after else None
+if not first or first[0] != "meta" or first[1].get("http-equiv", "").lower() != "content-security-policy" or first[1].get("content") != csp:
+    fail("after patching, the CSP meta is not the first element of the real <head>")
+if any(t[2] < first[2] and risky(t[0], t[1]) for t in ptags):
+    fail("after patching, loading / executable content still precedes the CSP")
+cs = re.search(r"<meta\s+charset\s*=", patched, flags=re.I)
 if not cs or cs.start() > 1024:
-    print("::error::the charset declaration is missing or beyond the first 1024 bytes after inserting the CSP", file=sys.stderr); sys.exit(1)
-open(path, "w", encoding="utf-8").write(html)
+    fail("the charset declaration is missing or beyond the first 1024 bytes after inserting the CSP")
+open(path, "w", encoding="utf-8").write(patched)
 PY
 grep -q 'http-equiv="Content-Security-Policy"' "$dist/index.html" || die "CSP not added"
 

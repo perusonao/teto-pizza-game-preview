@@ -195,6 +195,15 @@ import sys; h=open(sys.argv[1]).read(); sys.exit(0 if h.index("Content-Security-
 PY
 mk; sed -i 's#<!doctype html><html><head>#<!doctype html><html><script src="x.js"></script><head>#' "$T/d/index.html"; expect_fail "patch: a script BEFORE <head> is refused (it would run before any CSP)" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; sed -i 's#<head>#<link rel="stylesheet" href="x.css"><head>#' "$T/d/index.html"; expect_fail "patch: a <link> before <head> is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><!-- <head> --><meta charset="UTF-8" /><script src="/teto-pizza-game-preview/pr/%s/assets/i.js"></script></html>' $SLUG > "$T/d/index.html"; expect_fail "patch (Codex P2 r4): a commented-out <head> with an IMPLICIT head is refused (no CSP could be placed first)" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><!-- <head> --><head><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_ok "patch: a commented-out <head> BEFORE the real <head> is ignored" bash "$S/patch-build.sh" "$T/d" $SLUG
+python3 -I - "$T/d/index.html" <<'PY' && ok "patched: the CSP is inside the REAL <head>, not inside the comment" || bad "CSP landed in the comment"
+import sys; h=open(sys.argv[1]).read(); c=h.index("Content-Security-Policy"); sys.exit(0 if h.index("<!-- <head> -->") < h.index("<head>\n    <meta http-equiv") <= c else 1)
+PY
+mk; printf '<!doctype html><html><head><!-- <script src="x.js"></script> --><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_ok "patch: a <script> inside a COMMENT is not executable content" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><script>var h="<head>";</script><head><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_fail "patch: a script BEFORE <head> is refused even if its text mentions <head>" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><head data-x="<script>"><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_ok "patch: markup-looking text inside an ATTRIBUTE VALUE is not a tag" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><HEAD><meta charset="UTF-8" /></HEAD></html>' > "$T/d/index.html"; expect_ok "patch: an upper-case <HEAD> is found" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; sed -i 's#<head>##' "$T/d/index.html"; expect_fail "patch: an index.html without a <head> tag is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; sed -i 's#<head>#<head><head>#' "$T/d/index.html"; expect_fail "patch: two <head> tags are refused" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; sed -i 's#<meta charset="UTF-8" />#<meta charset="UTF-8" /><meta http-equiv="refresh" content="0;url=/x">#' "$T/d/index.html"; expect_ok "patch: (a refresh meta AFTER the CSP is not before it)" bash "$S/patch-build.sh" "$T/d" $SLUG
