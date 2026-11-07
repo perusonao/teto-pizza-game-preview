@@ -101,11 +101,18 @@ expect_ok "push.sh commits + pushes" bash "$S/push.sh" $SLUG "PR page deploy: $S
 [[ "$(git rev-parse HEAD)" == "$(git --git-dir="$T/remote.git" rev-parse main)" ]] && ok "remote main == pushed commit" || bad "remote not updated"
 jq -e --arg sha "$SHA" '.sha==$sha and .pr=="494"' pr/$SLUG/preview-meta.json >/dev/null && ok "preview-meta.json records PR + sha" || bad "meta"
 
-echo "  -- concurrent push: another job pushed first (non-overlapping path)"
-git clone -q "$T/remote.git" "$T/other" && ( cd "$T/other" && git config user.email o@o && git config user.name o && echo n > site/new.txt && git add -A && git commit -qm other && git push -q origin main )
+echo "  -- concurrent push: another job pushed first (outside site/ and outside this page)"
+git clone -q "$T/remote.git" "$T/other" && ( cd "$T/other" && git config user.email o@o && git config user.name o && echo n > README.md && git add -A && git commit -qm other && git push -q origin main )
 echo changed >> "$T/dist/index.html"; ( export PR_NUMBER=494 SHA=$SHA RUN_ID=2; bash "$S/apply.sh" deploy $SLUG "$T/dist" >/dev/null )
 expect_ok "push.sh rebases onto the concurrent push and re-guards" bash "$S/push.sh" $SLUG "redeploy"
-git --git-dir="$T/remote.git" show main:site/new.txt >/dev/null 2>&1 && ok "concurrent change preserved" || bad "concurrent change lost"
+git --git-dir="$T/remote.git" show main:README.md >/dev/null 2>&1 && ok "concurrent (non-site) change preserved" || bad "concurrent change lost"
+echo "  -- concurrent push that changes the SHARED site/ after the preflight (Codex P2 on PR 5): must NOT publish"
+( cd "$T/other" && git pull -q origin main && echo n > site/new.txt && git add -A && git commit -qm shared-update && git push -q origin main )
+echo changed2 >> "$T/dist/index.html"; ( export PR_NUMBER=494 SHA=$SHA RUN_ID=2b; bash "$S/apply.sh" deploy $SLUG "$T/dist" >/dev/null )
+REMOTE_BEFORE="$(git --git-dir="$T/remote.git" rev-parse main)"
+expect_fail "push.sh refuses when site/ changed on main since the preflight" bash "$S/push.sh" $SLUG "redeploy2"
+[[ "$(git --git-dir="$T/remote.git" rev-parse main)" == "$REMOTE_BEFORE" ]] && ok "nothing was pushed" || bad "remote moved despite the refusal"
+git reset -q --hard origin/main; git fetch -q origin; git reset -q --hard origin/main; git clean -fdq
 
 echo "  -- guard"
 echo hack > site/index.html; git add site/index.html
@@ -182,6 +189,15 @@ expect_ok "patch: .mjs / .json are scanned as well" bash "$S/patch-build.sh" "$T
 mk; printf '\x00\x01teto-pizza-preview-save-v1\x00' > "$T/d/assets/blob.bin"; expect_fail "patch: a binary file embedding a key fails the build" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; echo 'k="teto.dev.newThing"' >> "$T/d/assets/i.js"; expect_fail "patch: unknown teto.dev.* flag fails closed" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; sed -i 's#<meta charset="UTF-8" />#<meta charset="UTF-8" /><meta http-equiv="Content-Security-Policy" content="x">#' "$T/d/index.html"; expect_fail "patch: refuses an index.html that already has a CSP" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo '<html><script>1</script></html>' > "$T/d/escape.html"; expect_fail "patch: refuses a second HTML document (it would run without the page CSP)" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo '<svg xmlns="http://www.w3.org/2000/svg"><script>1</script></svg>' > "$T/d/assets/x.svg"; expect_fail "patch: refuses an SVG document" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo '<x/>' > "$T/d/assets/x.xml"; expect_fail "patch: refuses an XML document" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo '<html/>' > "$T/d/assets/UPPER.HTM"; expect_fail "patch: refuses a document-like file regardless of case" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; sed -i 's#</head>#<iframe src="x"></iframe></head>#' "$T/d/index.html"; expect_fail "patch: refuses an iframe in index.html" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; sed -i 's#</head>#<base href="/"></head>#' "$T/d/index.html"; expect_fail "patch: refuses a <base> element in index.html" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; bash "$S/patch-build.sh" "$T/d" $SLUG >/dev/null
+grep -q "worker-src 'none'" "$T/d/index.html" && ! grep -q "worker-src 'self'" "$T/d/index.html" && ok "CSP denies workers (worker-src 'none')" || bad "CSP worker-src"
+grep -q "frame-src 'none'" "$T/d/index.html" && grep -q "child-src 'none'" "$T/d/index.html" && ok "CSP denies frames / child contexts" || bad "CSP frame-src"
 mk; bash "$S/patch-build.sh" "$T/d" $SLUG >/dev/null; expect_fail "patch: refuses to run twice on the same dist" bash "$S/patch-build.sh" "$T/d" $SLUG
 
 echo "live checks (local http server stands in for github.io)"
@@ -193,6 +209,16 @@ expect_ok   "check-root-synced: live root == site/index.html" bash "$S/check-roo
 echo "<!-- drift -->" >> "$LROOT/teto-pizza-game-preview/index.html"
 expect_fail "check-root-synced: refuses when live root differs (pending shared update)" bash "$S/check-root-synced.sh"
 cp "$ROOT/site/index.html" "$LROOT/teto-pizza-game-preview/index.html"
+echo "{}" >> "$LROOT/teto-pizza-game-preview/manifest.webmanifest"
+expect_fail "check-root-synced: refuses when ONLY manifest.webmanifest differs (Codex P2 on PR 2)" bash "$S/check-root-synced.sh"
+cp "$ROOT/site/manifest.webmanifest" "$LROOT/teto-pizza-game-preview/manifest.webmanifest"
+A1="$(find "$ROOT/site/assets" -type f | head -1)"; [[ -n "$A1" ]] && { echo x >> "$LROOT/teto-pizza-game-preview/assets/$(basename "$A1")"
+expect_fail "check-root-synced: refuses when ONLY a hashed asset differs" bash "$S/check-root-synced.sh"
+cp "$A1" "$LROOT/teto-pizza-game-preview/assets/$(basename "$A1")"; }
+I1="$(find "$ROOT/site/icons" -type f | head -1)"; [[ -n "$I1" ]] && { rm "$LROOT/teto-pizza-game-preview/icons/$(basename "$I1")"
+expect_fail "check-root-synced: refuses when an icon is missing live" bash "$S/check-root-synced.sh"
+cp "$I1" "$LROOT/teto-pizza-game-preview/icons/$(basename "$I1")"; }
+expect_ok   "check-root-synced: passes again once every file matches" bash "$S/check-root-synced.sh"
 export EXPECT_RUN_ID=777-1
 expect_fail "verify-live deploy: fails while the page is absent" bash "$S/verify-live.sh" deploy $SLUG
 mkdir -p "$LROOT/teto-pizza-game-preview/pr/$SLUG/assets"

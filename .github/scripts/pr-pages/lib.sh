@@ -15,8 +15,10 @@ valid_slug() { [[ "$1" =~ ^pr-[1-9][0-9]{0,5}-[0-9a-f]{7}$ ]]; }
 
 # Browser-enforced network lockdown for a PR page (a <meta> CSP in index.html): the page may talk to its own
 # origin only, so even PR code that had a Firebase config could not write to Firebase / production endpoints.
+# Workers are denied outright ('none'): a worker script is NOT governed by the creating document's CSP, so allowing one would
+# let PR code relay data around connect-src. Frames/child contexts are denied too (a same-origin child document would not inherit this meta CSP).
 # It does NOT isolate same-origin storage (see docs/PR-PAGES.md "Trust model").
-PR_PAGE_CSP="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"
+PR_PAGE_CSP="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; connect-src 'self'; worker-src 'none'; child-src 'none'; frame-src 'none'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"
 
 # --- Batch 19 iPhone HV: the ONE fixed-SHA exception (Owner decision, Issue #774 / PR #783) -------------------------------
 # PR #783's own head is B19_PR_HEAD. The Preview-only HV seed lives on a descendant commit that is not a PR head, so the

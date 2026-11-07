@@ -1,16 +1,23 @@
 #!/usr/bin/env bash
-# Proves the LIVE shared Preview root is byte-identical to site/index.html of the checkout.
-#   * before a publish: pages.yml deploys the whole of `main`, so if site/ on main is ahead of what is live
-#     (a shared-Preview update that was pushed but never deployed), dispatching it would ALSO publish that
-#     pending shared change. In that case this fails and nothing is published.
-#   * after a publish/remove: proves the root was served unchanged.
-# env: LIVE_ORIGIN (default https://perusonao.github.io)   run from the repo root
+# The LIVE shared Preview must be byte-for-byte what `site/` on this checkout holds -- EVERY file, not just index.html --
+# otherwise dispatching pages.yml would also publish a pending shared-Preview change (e.g. only manifest.webmanifest, an icon or
+# an unreferenced asset changed, which leaves index.html identical). usage: check-root-synced.sh   env: LIVE_ORIGIN
+# Residual (documented): a pending file DELETION is not visible from outside; deploy-from-source.yml always replaces the hashed
+# assets and index.html together, so a real shared update changes index.html or a referenced asset and is caught here.
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 origin="${LIVE_ORIGIN:-https://perusonao.github.io}"
 [[ -f site/index.html ]] || die "site/index.html missing in the checkout"
-want="$(sha256sum site/index.html | cut -d' ' -f1)"
-got="$(curl -fsS --retry 3 --max-time 30 "${origin}${PAGES_BASE}/" | sha256sum | cut -d' ' -f1)" \
-  || die "shared Preview root ${origin}${PAGES_BASE}/ is not reachable"
-[[ "$want" == "$got" ]] || die "live shared Preview root (${got}) differs from site/index.html on main (${want}): a shared-Preview update is pending or the root changed. Refusing: deploy/verify that first."
-echo "shared Preview root is live and identical to site/index.html (${got})"
+n=0
+while IFS= read -r -d '' f; do
+  rel="${f#site/}"
+  want="$(sha256sum "$f" | cut -d' ' -f1)"
+  # percent-encode only characters outside the safe URL set
+  enc="$(python3 -I -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1]))' "$rel")"
+  got="$(curl -fsS --retry 3 --max-time 30 "${origin}${PAGES_BASE}/${enc}" | sha256sum | cut -d' ' -f1)" \
+    || die "live shared Preview file ${PAGES_BASE}/${rel} is not reachable"
+  [[ "$want" == "$got" ]] || die "live ${PAGES_BASE}/${rel} (${got}) differs from site/${rel} on this checkout (${want}): a shared-Preview update is pending or the live site changed. Refusing: deploy/verify that first."
+  n=$((n + 1))
+done < <(find site -type f -print0 | sort -z)
+((n > 0)) || die "site/ holds no files"
+echo "shared Preview is live and identical to site/ on this checkout (${n} files)"

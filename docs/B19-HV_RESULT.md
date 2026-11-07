@@ -55,3 +55,11 @@ URL を新しく開くと再シード、reload・戻る操作では再シード�
 
 ## 残る Owner 判断
 承認 A（main への merge、または PR #2 の扱い）、承認 B（deploy の実行）、`github-pages` environment の Required reviewer の使用可否、HV 終了後の remove。
+
+## 追補（レビュー指摘4件の精査、PR #5）
+PR #2 の未解決指摘（P1×3・P2×1）と、PR #5 の Codex 指摘 P2×2 を精査して修正した。詳細は `docs/PR-PAGES.md` の「Open risk register」。
+- **同一 origin（P1）: 残存（OPEN）。** Safari のプライベートタブは、tester の既存データをそのセッションから隔離する手順にすぎず、URL を通常タブで開く人には効かない（公開側で強制できない）。別 origin だけが根本解決で、現状は Owner が受容する時限リスク（短期公開 → remove）。
+- 追加 HTML の CSP（P1）: 修正（index.html 以外の文書系ファイルはビルド失敗、frame/child 禁止）。
+- Worker（P1）: 修正（`worker-src 'none'`）。実ブラウザで blob Worker は実行されず、旧ポリシーでは失敗することを確認。
+- 共有サイト全体の同期（P2）: 修正（全ファイル比較＋ push 時に `site/` が動いたら中止）。
+- PR #5 Codex P2×2: push 時の `site/` 変更検査（上記）／ランタイムテストのバッジを slug から導出（さらに `?cheeseCanvas=0` の期待値を現行アプリに合わせた）。

@@ -24,6 +24,13 @@ grep -q '<meta charset="UTF-8" />' "$dist/index.html" || die "index.html charset
 sed -i 's#<meta charset="UTF-8" />#<meta charset="UTF-8" />\n    <meta name="robots" content="noindex, nofollow" />#' "$dist/index.html"
 grep -q 'name="robots" content="noindex, nofollow"' "$dist/index.html" || die "noindex not added"
 
+# 2a) Exactly ONE executable document. The CSP below is a <meta> in index.html only; any other HTML-like document (html, htm, xhtml, xml,
+#     svg, ...) would run with NO policy of its own on the shared origin (and could be framed/navigated to). Reject them all, and reject
+#     index.html embedding frames/objects/base, so a page cannot smuggle in a second, unrestricted document.
+extra_docs="$(find "$dist" -type f \( -iname '*.html' -o -iname '*.htm' -o -iname '*.xhtml' -o -iname '*.xht' -o -iname '*.shtml' -o -iname '*.xml' -o -iname '*.svg' -o -iname '*.svgz' -o -iname '*.pdf' \) ! -path "$dist/index.html" -print)"
+[[ -z "$extra_docs" ]] || die "dist contains document-like file(s) besides index.html (they would run without the page CSP): $(echo "$extra_docs" | head -5 | tr '\n' ' ')"
+if grep -qiE '<(iframe|frame|frameset|object|embed|base|form)[ >/]' "$dist/index.html"; then die "index.html embeds a frame/object/embed/base/form element"; fi
+
 # 2b) Browser-enforced network lockdown (CSP meta, first in <head> so it precedes every script).
 if grep -q 'Content-Security-Policy' "$dist/index.html"; then die "index.html already carries a CSP; review patch-build.sh"; fi
 python3 -I - "$dist/index.html" "$PR_PAGE_CSP" <<'PY'

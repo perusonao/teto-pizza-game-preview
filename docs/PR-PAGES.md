@@ -51,10 +51,14 @@ What this design does about it:
   `workflow_dispatch` itself needs write access to this repo — review the diff before you dispatch;
 - the key rewrite and the `--slug` suffix prevent **accidental** sharing (a normal game build never touches the
   other saves or opt-ins); they are not a defence against hostile code;
-- a **CSP `<meta>`** (`connect-src 'self'`, no inline/eval script, `object-src 'none'`, `form-action 'self'`) makes
-  the **browser** block fetch / XHR / WebSocket / EventSource to any other origin (Firestore, production
-  endpoints, ...). It is a layer, not a wall: `navigator.sendBeacon` and top-level navigations are not covered
-  (the runtime test reports the former as a known gap), and it cannot stop same-origin storage access;
+- a **CSP `<meta>`** (`connect-src 'self'`, no inline/eval script, `object-src 'none'`, `form-action 'self'`,
+  **`worker-src 'none'`, `child-src 'none'`, `frame-src 'none'`**) makes the **browser** block fetch / XHR / WebSocket /
+  EventSource to any other origin (Firestore, production endpoints, ...) and denies Workers and frames. Workers are denied
+  because a worker script is not governed by the creating document's CSP; frames because a same-origin child document would
+  not inherit a `<meta>` CSP. The build also **rejects any document-like file other than `index.html`** (html, htm, xhtml,
+  xml, svg, pdf ...) and an `index.html` that embeds frame/object/embed/base/form. It is a layer, not a wall:
+  `navigator.sendBeacon` and top-level navigations are not covered (the runtime test reports the former as a known gap),
+  and it cannot stop same-origin storage access;
 - the page ships with no Firebase config (build job has no secrets), so the app never initialises Firebase.
 
 A truly isolated origin (a separate account/org Pages site or a custom domain) is the only complete answer. That
@@ -92,8 +96,10 @@ be previewed, do not use this workflow for them.
 - **No Firebase / production writes**: the build job has no secrets; it asserts no `VITE_FIREBASE_*` in the
   environment and no loadable `.env*` file in the source, so the app's Firebase config stays `null` (the SDK is
   never initialised). The runtime check records every request and requires none to leave localhost.
-- **Shared Preview already published**: before anything is pushed, `check-root-synced.sh` requires the **live**
-  root to equal `site/index.html` on `main`. `pages.yml` deploys all of `main`, so without this a dispatch could
+- **Shared Preview already published**: before anything is pushed, `check-root-synced.sh` requires **every file** of the
+  live shared Preview (not just `index.html`) to equal `site/` on `main`, and `push.sh` refuses to publish if `site/` changed
+  on `main` between that preflight and the push (a concurrent shared-Preview update). A pending file *deletion* is not visible
+  from outside; `deploy-from-source.yml` always replaces `index.html` and the hashed assets together, so a real update is caught. `pages.yml` deploys all of `main`, so without this a dispatch could
   also publish a pending shared-Preview update. It runs again after the publish.
 - **Concurrency**: same group as `deploy-from-source.yml` (`cancel-in-progress: false`): never concurrently
   with a shared-Preview deploy or another PR-page job. GitHub keeps one queued run per group; a third
@@ -123,3 +129,12 @@ The B19 HV seed (`?hv=b19-*`) lives on commit `8137dc3ba61d636d777b05596b8866f5a
 Slug `pr-783-8137dc3`; storage keys are namespaced with the usual `--pr-783-8137dc3` suffix. Run: Actions -> Publish / remove a PR-scoped preview page
 -> `deploy` / `783` / `8137dc3ba61d636d777b05596b8866f5a74a9d03` / `pr-783-8137dc3`. Remove with the same values and `remove`.
 Tests: `tests/pr-pages.test.sh` ("Batch 19 fixed-SHA exception", real compare output in `tests/fixtures/`).
+
+## Open risk register (read before approving a publish)
+
+| Review finding (PR #2) | State in this branch |
+|---|---|
+| P1 same origin (PR code runs on `perusonao.github.io`) | **OPEN, not fixed, not fixable here.** Only a separate origin removes it. Mitigations narrow it (allow-listed author, exact-SHA pin and, for B19, a verification-only diff on top of PR #783's own code; per-page key namespace; CSP; no Firebase config; short-lived publication; remove afterwards). A Safari **private tab** keeps the tester's *existing* browser data out of reach for that session, but it is a procedure the publisher cannot enforce: anyone who opens the URL in a normal tab runs it on the shared origin. Treat the publish as an accepted, time-boxed risk, decided by the Owner. |
+| P1 CSP only on `index.html` | Fixed: any other document-like file fails the build; frames/child contexts are denied; tested (unit + runtime). |
+| P1 Workers escape the CSP | Fixed: `worker-src 'none'`; the runtime test proves a blob worker does not run and a service worker cannot register (and fails against the old policy). |
+| P2 whole-site sync | Fixed: every file of `site/` is compared with the live site; `push.sh` also refuses if `site/` changed after the preflight. Residual: pending deletions. |

@@ -6,6 +6,10 @@
 const { chromium } = await import(process.env.PLAYWRIGHT ?? "playwright-core");
 const ORIGIN = process.env.ORIGIN ?? "http://127.0.0.1:8765";
 const SLUG = process.env.SLUG ?? "pr-494-a3d1872";
+// Expected badge, derived from the slug (pr-<number>-<sha7>); HV = the ?hv= seed to load (default: the Hint 5.0 "normal" seed).
+const [, EXPECT_PR, EXPECT_SHA7] = /^pr-([1-9][0-9]*)-([0-9a-f]{7})$/.exec(SLUG) ?? [];
+if (!EXPECT_PR) throw new Error(`bad SLUG ${SLUG}`);
+const HV = process.env.HV ?? "normal";
 const ROOT = "/teto-pizza-game-preview/";
 const PAGE = `${ROOT}pr/${SLUG}/`;
 const SAVE = "teto-pizza-preview-save-v1";
@@ -40,7 +44,7 @@ await shared.close();
 const page = await ctx.newPage();
 const errors = [];
 page.on("pageerror", (e) => errors.push(String(e)));
-await page.goto(`${ORIGIN}${PAGE}?hv=normal`);
+await page.goto(`${ORIGIN}${PAGE}?hv=${HV}`);
 await page.waitForTimeout(1500);
 let ls = await dump(page);
 const own = `${SAVE}--${SLUG}`;
@@ -52,7 +56,7 @@ for (const [k, v] of Object.entries(marks)) check(`untouched: ${k}`, ls[k] === v
 check("PR page did not read the shared cheese opt-in", !(`${CHEESE}--${SLUG}` in ls));
 check("no page errors", errors.length === 0, errors.join(" | "));
 const badge = await page.locator(".preview-badge").first().textContent().catch(() => null);
-check("badge shows PR#494 and the short SHA", /PR#494/.test(badge ?? "") && /a3d1872/.test(badge ?? ""), String(badge));
+check(`badge shows PR#${EXPECT_PR} and the short SHA ${EXPECT_SHA7}`, new RegExp(`PR#${EXPECT_PR}\\b`).test(badge ?? "") && (badge ?? "").includes(EXPECT_SHA7), String(badge));
 
 // 3) it really is the page's persistence: change state through the UI, reload, still there
 const before = ls[own];
@@ -72,7 +76,8 @@ check("shared cheese key unchanged", ls[CHEESE] === "1");
 await page.goto(`${ORIGIN}${PAGE}?cheeseCanvas=0`);
 await page.waitForTimeout(800);
 ls = await dump(page);
-check("?cheeseCanvas=0 removed only the page-scoped key", !(`${CHEESE}--${SLUG}` in ls) && ls[CHEESE] === "1");
+// Since #486 `?cheeseCanvas=0` is REMEMBERED as "0" (older builds removed the key): either way only the page-scoped key changes.
+check("?cheeseCanvas=0 changed only the page-scoped key (removed or remembered as 0); the shared key is intact", (!(`${CHEESE}--${SLUG}` in ls) || ls[`${CHEESE}--${SLUG}`] === "0") && ls[CHEESE] === "1");
 
 // 4b) the CSP: nothing breaks on the main screens, and the BROWSER (not just the absence of a config) blocks
 //     any request to another origin -- Firebase, production endpoints, anything.
@@ -141,6 +146,30 @@ check("fetch / XHR to Firestore, the production origin or any other origin is bl
 check("the blocks were reported as CSP connect-src violations", violations.filter((v) => v.startsWith("connect-src")).length >= 3, violations.join(" | "));
 violations.length = 0;
 
+// 4d) Workers and frames are denied outright: a worker script is not governed by the creating document's CSP, and a same-origin
+//     child document would not inherit this <meta> CSP, so either could relay storage around connect-src (Codex P1s on PR 2).
+const wf = await page.evaluate(async (assetsHint) => {
+  const out = {};
+  const js = [...document.scripts].map((x) => x.src).find(Boolean) ?? assetsHint;
+  // `new Worker()` does not throw when a CSP denies it (the load fails asynchronously), so "created" proves nothing: a worker only counts
+  // as allowed if its script actually RUNS and posts a message back.
+  const runs = (make) => new Promise((res) => {
+    let w; try { w = make(); } catch { res("blocked"); return; }
+    w.onmessage = () => { w.terminate(); res("ran"); }; w.onerror = () => { w.terminate(); res("blocked"); };
+    setTimeout(() => { w.terminate(); res("blocked"); }, 2000);
+  });
+  out.blobWorker = await runs(() => new Worker(URL.createObjectURL(new Blob(["postMessage(1)"], { type: "text/javascript" }))));
+  out.urlWorker = await runs(() => new Worker(js)); // the app bundle: would error (no window) if it loaded, so only the violation report below proves the CSP did it
+  try { await navigator.serviceWorker.register(js); out.serviceWorker = "registered"; } catch { out.serviceWorker = "blocked"; }
+  out.iframe = await new Promise((res) => {
+    const f = document.createElement("iframe"); f.src = location.href; f.onload = () => { let ok = true; try { ok = !!f.contentDocument && f.contentDocument.body !== null && f.contentDocument.URL !== "about:blank"; } catch { ok = false; } f.remove(); res(ok ? "loaded" : "blocked"); }; f.onerror = () => res("blocked"); document.body.appendChild(f); setTimeout(() => res("blocked"), 3000);
+  });
+  return out;
+}, PAGE);
+check("Worker / blob Worker / service worker / iframe are all blocked by the CSP", Object.values(wf).every((v) => v === "blocked"), JSON.stringify(wf));
+check("those blocks were reported as CSP violations (worker-src x2+ and frame/child-src)", violations.filter((v) => v.startsWith("worker-src")).length >= 2 && violations.some((v) => v.startsWith("frame-src") || v.startsWith("child-src")), violations.join(" | "));
+violations.length = 0;
+
 // 5) the shared Preview root still works and still sees only its own keys
 const root = await ctx.newPage();
 await root.goto(ORIGIN + ROOT);
@@ -148,7 +177,7 @@ await root.waitForTimeout(800);
 ls = await dump(root);
 for (const [k, v] of Object.entries(marks)) check(`root view unchanged: ${k}`, ls[k] === v, `now=${ls[k]}`);
 const rbadge = await root.locator(".preview-badge").first().textContent().catch(() => null);
-check("shared Preview root badge is unchanged (not PR#494)", !/PR#494/.test(rbadge ?? ""), String(rbadge));
+check(`shared Preview root badge is unchanged (not PR#${EXPECT_PR})`, !new RegExp(`PR#${EXPECT_PR}\\b`).test(rbadge ?? ""), String(rbadge));
 
 // 6) no request ever left localhost (blocked attempts above never reach the network): nothing can reach Firebase / production
 const unexpected = external.filter((u) => !u.includes("example.com/x")); // example.com/x = the sendBeacon probe above

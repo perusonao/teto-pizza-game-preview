@@ -9,11 +9,15 @@ slug="${1:?}"; msg="${2:?}"
 git diff --cached --quiet && { echo "No changes to publish."; echo "changed=false"; exit 0; }
 git config user.name "github-actions[bot]"
 git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+# The shared site/ tree that the preflight (check-root-synced.sh) verified against the live site. If a concurrent push changes it,
+# publishing now would ship an unverified shared-Preview change with pages.yml, so refuse (re-run after that update is live).
+site_before="$(git rev-parse HEAD:site)"
 git commit -q -m "$msg"
 for attempt in 1 2 3; do
   git fetch -q origin main
   git rebase -q origin/main || { git rebase --abort || true; die "rebase onto origin/main failed (attempt ${attempt})"; }
   bash "$(dirname "$0")/guard-paths.sh" "$slug" --range origin/main
+  [[ "$(git rev-parse HEAD:site)" == "$site_before" ]] || die "site/ changed on main while publishing (a shared-Preview update landed); not publishing. Deploy/verify that update first, then re-run."
   if git push -q origin HEAD:main; then
     echo "changed=true"; echo "sha=$(git rev-parse HEAD)"; exit 0
   fi
