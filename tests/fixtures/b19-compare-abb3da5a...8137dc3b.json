@@ -1,0 +1,67 @@
+{
+  "status": "ahead",
+  "behind_by": 0,
+  "ahead_by": 5,
+  "total_commits": 5,
+  "base_commit": {
+    "sha": "abb3da5a1021b160b2ee75acbe5a00866a8a0eaf"
+  },
+  "merge_base_commit": {
+    "sha": "abb3da5a1021b160b2ee75acbe5a00866a8a0eaf"
+  },
+  "commits": [
+    {
+      "sha": "02619f182468cb6aa0435084c752846a55f07d39"
+    },
+    {
+      "sha": "5b361edee3c5e2139027722416cc1179794d3b18"
+    },
+    {
+      "sha": "03a6c512d5fddc1c398b58ef87115a42bf37ed60"
+    },
+    {
+      "sha": "bc3f99466eee55635ba90bcfc7d24da43120723f"
+    },
+    {
+      "sha": "8137dc3ba61d636d777b05596b8866f5a74a9d03"
+    }
+  ],
+  "files": [
+    {
+      "filename": "docs/reports/TETO_ALT-CONTROL-IMPACT_784_Score-Stars-LunchRush-MultiSauce_2026-11-07.md",
+      "status": "added"
+    },
+    {
+      "filename": "docs/reports/TETO_B19-HV_Seed-and-LAN-Steps_2026-11-07.md",
+      "status": "added"
+    },
+    {
+      "filename": "docs/reports/TETO_ICON-PRIORITY_417_Default-Size-Crosscheck_2026-11-07.md",
+      "status": "added"
+    },
+    {
+      "filename": "docs/reports/TETO_PREVIEW-ISOLATED_783_Options-and-Device-Steps_2026-11-07.md",
+      "status": "added"
+    },
+    {
+      "filename": "docs/reports/data/TETO_B19-HV_lan-serve.sh.txt",
+      "status": "added"
+    },
+    {
+      "filename": "src/preview/b19HvSeeds.test.ts",
+      "status": "added"
+    },
+    {
+      "filename": "src/preview/b19HvSeeds.ts",
+      "status": "added"
+    },
+    {
+      "filename": "src/preview/hvSeeds.ts",
+      "status": "modified"
+    },
+    {
+      "filename": "src/preview/previewIsolation.gate.test.ts",
+      "status": "modified"
+    }
+  ]
+}

@@ -17,3 +17,14 @@ valid_slug() { [[ "$1" =~ ^pr-[1-9][0-9]{0,5}-[0-9a-f]{7}$ ]]; }
 # origin only, so even PR code that had a Firebase config could not write to Firebase / production endpoints.
 # It does NOT isolate same-origin storage (see docs/PR-PAGES.md "Trust model").
 PR_PAGE_CSP="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'"
+
+# --- Batch 19 iPhone HV: the ONE fixed-SHA exception (Owner decision, Issue #774 / PR #783) -------------------------------
+# PR #783's own head is B19_PR_HEAD. The Preview-only HV seed lives on a descendant commit that is not a PR head, so the
+# normal "sha == current PR head" rule would refuse it. Exactly this (PR number, SHA) pair is accepted when, in addition,
+# PR #783 is still open at B19_PR_HEAD, the SHA is strictly AHEAD of that head, and every file changed between them is in
+# B19_ALLOWED_PATHS (the seed + its tests + docs; no package.json / lockfile / build config, so the build scripts that run
+# are exactly PR #783's own).
+B19_PR_NUMBER="783"
+B19_PR_HEAD="abb3da5a1021b160b2ee75acbe5a00866a8a0eaf"
+B19_HV_SHA="8137dc3ba61d636d777b05596b8866f5a74a9d03"
+B19_ALLOWED_PATHS='^(src/preview/(b19HvSeeds\.ts|b19HvSeeds\.test\.ts|hvSeeds\.ts|previewIsolation\.gate\.test\.ts)|docs/.*)$'

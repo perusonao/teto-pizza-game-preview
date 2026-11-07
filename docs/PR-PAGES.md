@@ -108,3 +108,18 @@ be previewed, do not use this workflow for them.
 Run the same workflow with `action=remove`. The files stay in git history of this public repo (no secrets:
 the build gets no Firebase variables). Running `deploy-from-source.yml` replaces only the shared Preview and
 leaves PR pages in place; remove them when the verification is finished.
+
+## Batch 19 iPhone HV: the one fixed-SHA exception (Issue #774, PR #783)
+
+The B19 HV seed (`?hv=b19-*`) lives on commit `8137dc3ba61d636d777b05596b8866f5a74a9d03`, a descendant of PR #783's head
+`abb3da5a1021b160b2ee75acbe5a00866a8a0eaf` that is **not** a PR head, so the strict "sha == current PR head" rule would refuse it.
+`validate-inputs.sh` therefore accepts exactly the pair **PR 783 + that SHA**, and only when ALL of this holds (all else is unchanged):
+
+- PR #783 is open, same-repo, by an allow-listed author, **and its head is still `abb3da5a`**;
+- GitHub's compare `abb3da5a...8137dc3b` is `ahead` (strict descendant, `behind_by` 0, merge base = `abb3da5a`), the commit list is complete and contains the SHA;
+- every file changed after `abb3da5a` is in the allow-list (`lib.sh` `B19_ALLOWED_PATHS`): `src/preview/{b19HvSeeds.ts, b19HvSeeds.test.ts, hvSeeds.ts, previewIsolation.gate.test.ts}` and `docs/**`, status added/modified only,
+  no `..`. In particular **no `package.json`, lockfile, `vite.config.*` or other source**, so the scripts the build runs are exactly PR #783's own.
+
+Slug `pr-783-8137dc3`; storage keys are namespaced with the usual `--pr-783-8137dc3` suffix. Run: Actions -> Publish / remove a PR-scoped preview page
+-> `deploy` / `783` / `8137dc3ba61d636d777b05596b8866f5a74a9d03` / `pr-783-8137dc3`. Remove with the same values and `remove`.
+Tests: `tests/pr-pages.test.sh` ("Batch 19 fixed-SHA exception", real compare output in `tests/fixtures/`).

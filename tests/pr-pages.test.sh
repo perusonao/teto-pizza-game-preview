@@ -47,6 +47,42 @@ pull "$T/pull.json"
 expect_ok   "remove: needs no API / open PR"       v remove
 expect_fail "remove: confirm still required"       v remove 494 "$SHA" nope
 
+echo "validate-inputs: Batch 19 fixed-SHA exception (PR #783, Issue #774)"
+B19_HEAD=abb3da5a1021b160b2ee75acbe5a00866a8a0eaf; B19_SHA=8137dc3ba61d636d777b05596b8866f5a74a9d03; B19_SLUG=pr-783-8137dc3
+CMP_REAL="$ROOT/tests/fixtures/b19-compare-abb3da5a...8137dc3b.json"   # real GitHub compare output (trimmed to the used fields)
+b19v() { ( export ACTION=deploy PR_NUMBER="${1:-783}" SHA="${2:-$B19_SHA}" CONFIRM="${3:-$B19_SLUG}" SOURCE_REPO=perusonao/teto-pizza-game PULL_JSON_FILE="$T/pull.json" COMPARE_JSON_FILE="${4:-$T/cmp.json}"; bash "$S/validate-inputs.sh" ); }
+cmpmut() { jq "$1" "$CMP_REAL" > "$T/cmp.json"; }
+pull "$T/pull.json" "$B19_HEAD"; cp "$CMP_REAL" "$T/cmp.json"
+expect_ok   "b19: PR #783 open at its head, SHA strictly ahead, only allowed files" b19v
+pull "$T/pull.json" bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb; expect_fail "b19: refused when PR #783's head moved" b19v
+pull "$T/pull.json" "$B19_HEAD" closed;                       expect_fail "b19: refused when PR #783 is closed" b19v
+pull "$T/pull.json" "$B19_HEAD" open fork/teto;                expect_fail "b19: refused for a fork head" b19v
+pull "$T/pull.json" "$B19_HEAD" open perusonao/teto-pizza-game someone-else; expect_fail "b19: refused for a non-allow-listed author" b19v
+pull "$T/pull.json" "$B19_HEAD"
+cmpmut '.status="diverged"';                  expect_fail "b19: refused when the SHA is diverged, not ahead" b19v
+cmpmut '.status="behind"|.behind_by=3';       expect_fail "b19: refused when the SHA is behind PR #783's head" b19v
+cmpmut '.merge_base_commit.sha="cccccccccccccccccccccccccccccccccccccccc"'; expect_fail "b19: refused when the merge base is not PR #783's head" b19v
+cmpmut '.commits|=map(select(.sha!="'$B19_SHA'"))|.total_commits=(.commits|length)'; expect_fail "b19: refused when the SHA is not in the compared commits" b19v
+cmpmut '.total_commits=250';                  expect_fail "b19: refused when the commit list is incomplete (truncated)" b19v
+cmpmut '.files+=[{filename:"package.json",status:"modified"}]';                 expect_fail "b19: refused when package.json changed" b19v
+cmpmut '.files+=[{filename:"package-lock.json",status:"modified"}]';            expect_fail "b19: refused when the lockfile changed" b19v
+cmpmut '.files+=[{filename:"src/App.css",status:"modified"}]';                  expect_fail "b19: refused when game code outside the seed changed" b19v
+cmpmut '.files+=[{filename:"src/preview/b19HvSeeds.ts/../../App.tsx",status:"modified"}]'; expect_fail "b19: refused for a path-traversal lookalike" b19v
+cmpmut '.files+=[{filename:"docs/../src/App.tsx",status:"modified"}]';          expect_fail "b19: refused for a docs/../ traversal" b19v
+cmpmut '.files+=[{filename:"vite.config.ts",status:"modified"}]';               expect_fail "b19: refused when build config changed" b19v
+cmpmut '.files+=[{filename:"docs/x.md",status:"removed"}]';                     expect_fail "b19: refused for a removed file" b19v
+cmpmut '.files+=[{filename:"docs/y.md",status:"renamed"}]';                     expect_fail "b19: refused for a renamed file" b19v
+cmpmut '.files+=[{filename:"src/preview/hvSeeds.ts",status:"modified"}]';       expect_ok   "b19: an allowed seed file may be modified" b19v
+cmpmut '.files=[range(0;100)|{filename:"docs/a\(.).md",status:"added"}]';      expect_fail "b19: refused when the file list could be truncated (>= 100)" b19v
+cp "$CMP_REAL" "$T/cmp.json"
+expect_fail "b19: same SHA under another PR number is refused (falls back to the strict rule)" b19v 784 "$B19_SHA" pr-784-8137dc3
+expect_fail "b19: a different SHA under PR #783 is refused (not the exception, not the head)" b19v 783 dddddddddddddddddddddddddddddddddddddddd pr-783-ddddddd
+expect_ok   "b19: PR #783's own head still deploys by the normal rule" b19v 783 "$B19_HEAD" pr-783-abb3da5
+expect_fail "b19: confirm must still be typed (slug)" b19v 783 "$B19_SHA" nope
+expect_ok   "b19: remove needs no API" env ACTION=remove PR_NUMBER=783 SHA="$B19_SHA" CONFIRM="$B19_SLUG" SOURCE_REPO=perusonao/teto-pizza-game bash "$S/validate-inputs.sh"
+pull "$T/pull.json"
+expect_fail "b19: the normal PR #494 path is unchanged: a stale SHA is still refused" v deploy 494 "$B19_SHA" pr-494-8137dc3
+
 echo "apply / guard / push (temp repo with a bare remote)"
 git init -q --bare -b main "$T/remote.git"
 git init -q -b main "$T/w" && cd "$T/w"
