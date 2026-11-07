@@ -176,8 +176,7 @@ mk; bash "$S/patch-build.sh" "$T/d" $SLUG >/dev/null
 grep -q 'http-equiv="Content-Security-Policy"' "$T/d/index.html" && grep -q "connect-src 'self'" "$T/d/index.html" && ok "CSP meta added (connect-src 'self')" || bad "CSP missing"
 [[ "$(grep -n -E 'Content-Security-Policy|<script' "$T/d/index.html" | head -1 | grep -c Content-Security-Policy)" == 1 ]] && ok "CSP comes before the first script" || bad "CSP order"
 mk; sed -i 's#<head>#<head><script>localStorage.getItem("teto-pizza-preview-save-v1")</script>#' "$T/d/index.html"
-expect_ok "patch: rewrites keys in an inline <script> of index.html too" bash "$S/patch-build.sh" "$T/d" $SLUG
-grep -q "preview-save-v1--$SLUG" "$T/d/index.html" && ok "inline script key namespaced" || bad "inline script key left bare"
+expect_fail "patch: an inline <script> in index.html (even one holding a storage key) is refused: index.html may only load external modules (the CSP would block it as well)" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; echo 'export const k="teto-pizza-preview-save-v1";' > "$T/d/assets/w.mjs"; echo '{"k":"teto-pizza-cheese-canvas"}' > "$T/d/assets/c.json"
 expect_ok "patch: .mjs / .json are scanned as well" bash "$S/patch-build.sh" "$T/d" $SLUG
 ! grep -rqE "[\"'\`]teto-pizza-(preview-save-v1|cheese-canvas)[\"'\`]" "$T/d" && ok "no bare key in any emitted file" || bad "bare key left in a non-js file"
@@ -196,14 +195,23 @@ PY
 mk; sed -i 's#<!doctype html><html><head>#<!doctype html><html><script src="x.js"></script><head>#' "$T/d/index.html"; expect_fail "patch: a script BEFORE <head> is refused (it would run before any CSP)" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; sed -i 's#<head>#<link rel="stylesheet" href="x.css"><head>#' "$T/d/index.html"; expect_fail "patch: a <link> before <head> is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; printf '<!doctype html><html><!-- <head> --><meta charset="UTF-8" /><script src="/teto-pizza-game-preview/pr/%s/assets/i.js"></script></html>' $SLUG > "$T/d/index.html"; expect_fail "patch (Codex P2 r4): a commented-out <head> with an IMPLICIT head is refused (no CSP could be placed first)" bash "$S/patch-build.sh" "$T/d" $SLUG
-mk; printf '<!doctype html><html><!-- <head> --><head><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_ok "patch: a commented-out <head> BEFORE the real <head> is ignored" bash "$S/patch-build.sh" "$T/d" $SLUG
-python3 -I - "$T/d/index.html" <<'PY' && ok "patched: the CSP is inside the REAL <head>, not inside the comment" || bad "CSP landed in the comment"
-import sys; h=open(sys.argv[1]).read(); c=h.index("Content-Security-Policy"); sys.exit(0 if h.index("<!-- <head> -->") < h.index("<head>\n    <meta http-equiv") <= c else 1)
-PY
-mk; printf '<!doctype html><html><head><!-- <script src="x.js"></script> --><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_ok "patch: a <script> inside a COMMENT is not executable content" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><!-- <head> --><head><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_fail "patch: a commented-out <head> before the real <head> is refused (any comment is: browser and parser may disagree)" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><head><!-- <script src="x.js"></script> --><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_fail "patch: a <script> inside a COMMENT is refused (any comment is)" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; printf '<!doctype html><html><script>var h="<head>";</script><head><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_fail "patch: a script BEFORE <head> is refused even if its text mentions <head>" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; printf '<!doctype html><html><head data-x="<script>"><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_ok "patch: markup-looking text inside an ATTRIBUTE VALUE is not a tag" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; printf '<!doctype html><html><HEAD><meta charset="UTF-8" /></HEAD></html>' > "$T/d/index.html"; expect_ok "patch: an upper-case <HEAD> is found" bash "$S/patch-build.sh" "$T/d" $SLUG
+echo "patch-build: parser / browser differentials fail closed (Codex P2 on PR #2, round 5)"
+mk; printf '<!doctype html><html><!--><script src="/teto-pizza-game-preview/pr/%s/assets/early.js"></script><!-- --><head><meta charset="UTF-8" /></head></html>' $SLUG > "$T/d/index.html"; expect_fail "patch (Codex r5 fixture): '<!-->' hiding a script from HTMLParser is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><!--x--><head><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_fail "patch: ANY comment in index.html is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><head><meta charset="UTF-8" /><![CDATA[ <script src=x></script> ]]></head></html>' > "$T/d/index.html"; expect_fail "patch: a CDATA section is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><head><meta charset="UTF-8" /><?php x ?></head></html>' > "$T/d/index.html"; expect_fail "patch: a processing instruction is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><head><meta charset="UTF-8" /><!bogus <script src=x></script>></head></html>' > "$T/d/index.html"; expect_fail "patch: a bogus comment (<!x ...>) is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!DOCTYPE html><html><head><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_ok "patch: an upper-case DOCTYPE is the one '<!' allowed" bash "$S/patch-build.sh" "$T/d" $SLUG
+for tag in svg math template noscript xmp plaintext textarea noembed noframes style; do
+  mk; printf '<!doctype html><html><head><meta charset="UTF-8" /></head><body><%s>x</%s></body></html>' $tag $tag > "$T/d/index.html"; expect_fail "patch: <$tag> in index.html is outside a Vite shell and refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+done
+mk; printf '<!doctype html><html><head><meta charset="UTF-8" /><script>alert(1)</script></head></html>' > "$T/d/index.html"; expect_fail "patch: an inline <script> is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><head><meta charset="UTF-8" /><title>t</title></head><body><div id="root"></div></body></html>' > "$T/d/index.html"; expect_ok "patch: a typical Vite shell (meta, title, div#root) passes" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; sed -i 's#<head>##' "$T/d/index.html"; expect_fail "patch: an index.html without a <head> tag is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; sed -i 's#<head>#<head><head>#' "$T/d/index.html"; expect_fail "patch: two <head> tags are refused" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; sed -i 's#<meta charset="UTF-8" />#<meta charset="UTF-8" /><meta http-equiv="refresh" content="0;url=/x">#' "$T/d/index.html"; expect_ok "patch: (a refresh meta AFTER the CSP is not before it)" bash "$S/patch-build.sh" "$T/d" $SLUG
