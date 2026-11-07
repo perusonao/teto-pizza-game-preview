@@ -19,7 +19,7 @@ a PR on `main` would repeat PR #2's 15 files. Stacked, the diff is only the add-
 ## 3. Final Gate results (local; no CI exists for this repo's PRs)
 | Gate | Result |
 |---|---|
-| Offline tests `bash tests/pr-pages.test.sh` | 135 passed / 0 failed (19 for `source_sha`, 3 for remove, 27 for the PR #2 findings: other documents / workers / whole-tree sync / CSP, 4 for the two protections taken over from PR #5: a concurrent `site/` change during publish, and `<iframe>` / `<base>` in index.html) |
+| Offline tests `bash tests/pr-pages.test.sh` | 143 passed / 0 failed (8 for the CSP placement below, 19 for `source_sha`, 3 for remove, 27 for the PR #2 findings: other documents / workers / whole-tree sync / CSP, 4 for the two protections taken over from PR #5: a concurrent `site/` change during publish, and `<iframe>` / `<base>` in index.html) |
 | `source_sha` against real data (read-only GitHub API) | `abb3da5a...8137dc3b`: ahead 5, behind 0, 9 files, all under `docs/` or `src/preview/` → `OK: deploy pr-783-8137dc3`; a wrong `confirm` is refused |
 | Build of `8137dc3b` at the PR base path + `patch-build.sh` | passes: 4 storage keys renamed `--pr-783-8137dc3`, no production/shared-root reference, no Firebase, CSP added, manifest `start_url`/`scope` = the page path |
 | Real browser (Chromium 390×844), shared Preview root and the page on ONE origin, `tests/pr-page-runtime.mjs` with `HV=b19-pesto-burrata`, `HV=b19-crudaiola`, `HV=normal` | all checks pass in all three: production key and shared Preview save/opt-ins unchanged, the page writes only its own keys, no re-seed on reload, cross-origin fetch/XHR blocked by CSP, no external request, shared-root badge unchanged, page badge `PREVIEW · PR#783 · 8137dc3`, Shop shows `burrata` as NEW |
@@ -70,10 +70,13 @@ Residual risk after these fixes: `navigator.sendBeacon` and top-level navigation
 | #3 | Cloudflare Pages alternative (Phase 1B) | Not adopted; unrelated to this route | Leave / close at the Owner's discretion |
 Merge exactly one PR (#2). Merging #5 as well would conflict and would bring a second, different B19 mechanism.
 
+## 9b. Codex round 3 on PR #2 (integrated head `3cf71ec`): CSP placement
+Codex P2: the CSP `<meta>` was inserted after the `charset` anchor, so a script placed before that anchor would run before the policy. **Reproduced by reasoning and by test** (an early script kept its place ahead of the CSP). **Fixed:** `patch-build.sh` now inserts the CSP as the first thing in `<head>`, fails the build if anything that can load or run content (script, link, style, img, iframe, object, embed, media, base, form, svg, a refresh meta) precedes `<head>`, requires exactly one `<head>`, checks the CSP precedes every such tag and that the charset stays within the first 1024 bytes. 8 offline cases; the real `8137dc3b` page now has the CSP as the first element of `<head>` and passes all runtime checks (`b19-pesto-burrata`, `b19-crudaiola`, `normal`).
+
 ## 10. Final Gate (integrated head)
-- **Offline tests:** `bash tests/pr-pages.test.sh` → 135 passed / 0 failed (see §3).
+- **Offline tests:** `bash tests/pr-pages.test.sh` → 143 passed / 0 failed (see §3).
 - **`site/` == `main`:** `git diff origin/main HEAD -- site` is empty (two-dot) after merging `main` (`4a66b3c`) into the branch; no workflow other than `pages.yml` (site + optional `pr/`) and `pr-page.yml` is changed.
-- **Real browser (390×844):** unchanged code paths since the last full run on `b19-pesto-burrata`, `b19-crudaiola` and `normal` (all checks passed, worker / Service Worker / frame blocked, control starts, negative checks fail as they should); not re-run for the two small scripts added here, which the offline tests cover.
+- **Real browser (390×844):** unchanged code paths since the last full run on `b19-pesto-burrata`, `b19-crudaiola` and `normal` (all checks passed, worker / Service Worker / frame blocked, control starts, negative checks fail as they should); re-run in full after the CSP-placement fix (§9b) on a fresh build of `8137dc3b`: all passed.
 - **CI:** this repository has **no CI** that runs on pull requests (0 check runs; Actions here are manual `workflow_dispatch` plus `pages.yml` on `main`). The offline tests above are the only automated gate and are run by hand. **No Actions run has ever executed `pr-page.yml` with `source_sha`**; the first dispatch is the first end-to-end run.
 - **Codex:** see the PR #2 conversation for the review of the integrated head.
 - **Unresolved PR #2 threads:** the three fixed ones (CSP only on `index.html`, workers outside the CSP, `index.html`-only sync check) are verified by code and tests and resolved with evidence; the fourth (same origin) stays **open as an accepted risk**.

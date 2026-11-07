@@ -187,6 +187,21 @@ mk; sed -i 's#<meta charset="UTF-8" />#<meta charset="UTF-8" /><meta http-equiv=
 mk; bash "$S/patch-build.sh" "$T/d" $SLUG >/dev/null; expect_fail "patch: refuses to run twice on the same dist" bash "$S/patch-build.sh" "$T/d" $SLUG
 
 echo "patch-build: other documents, workers (Codex P1 x2 on PR #2)"
+echo "patch-build: the CSP must precede every script (Codex P2 on PR #2, round 2)"
+mk; sed -i 's#<head><meta charset="UTF-8" />#<head><script src="/teto-pizza-game-preview/pr/'$SLUG'/assets/early.js"></script><meta charset="UTF-8" />#' "$T/d/index.html"; grep -q 'early.js' "$T/d/index.html" || bad "fixture did not place the early script"
+expect_ok "patch: a script placed BEFORE the charset meta is fine only because the CSP is now inserted ahead of it" bash "$S/patch-build.sh" "$T/d" $SLUG
+python3 -I - "$T/d/index.html" <<'PY' && ok "patched index.html: CSP precedes the early script" || bad "CSP does not precede the early script"
+import sys; h=open(sys.argv[1]).read(); sys.exit(0 if h.index("Content-Security-Policy") < h.index("early.js") else 1)
+PY
+mk; sed -i 's#<!doctype html><html><head>#<!doctype html><html><script src="x.js"></script><head>#' "$T/d/index.html"; expect_fail "patch: a script BEFORE <head> is refused (it would run before any CSP)" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; sed -i 's#<head>#<link rel="stylesheet" href="x.css"><head>#' "$T/d/index.html"; expect_fail "patch: a <link> before <head> is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; sed -i 's#<head>##' "$T/d/index.html"; expect_fail "patch: an index.html without a <head> tag is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; sed -i 's#<head>#<head><head>#' "$T/d/index.html"; expect_fail "patch: two <head> tags are refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; sed -i 's#<meta charset="UTF-8" />#<meta charset="UTF-8" /><meta http-equiv="refresh" content="0;url=/x">#' "$T/d/index.html"; expect_ok "patch: (a refresh meta AFTER the CSP is not before it)" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; python3 -I - "$T/d/index.html" <<'PY'
+import sys; p=sys.argv[1]; h=open(p).read(); h=h.replace("<head>","<head>"+("<!--"+"x"*1100+"-->")+"",1); open(p,"w").write(h)
+PY
+expect_fail "patch: a charset pushed beyond the first 1024 bytes is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; sed -i 's#</head>#<iframe src="x"></iframe></head>#' "$T/d/index.html"; expect_fail "patch: an <iframe> in index.html is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; sed -i 's#</head>#<base href="/x/"></head>#' "$T/d/index.html"; expect_fail "patch: a <base> in index.html is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; printf '<!doctype html><script src="x.js"></script>' > "$T/d/escape.html"; expect_fail "patch: a SECOND HTML document in dist is refused (it would run without the CSP)" bash "$S/patch-build.sh" "$T/d" $SLUG

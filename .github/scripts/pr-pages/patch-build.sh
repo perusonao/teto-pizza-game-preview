@@ -24,15 +24,31 @@ grep -q '<meta charset="UTF-8" />' "$dist/index.html" || die "index.html charset
 sed -i 's#<meta charset="UTF-8" />#<meta charset="UTF-8" />\n    <meta name="robots" content="noindex, nofollow" />#' "$dist/index.html"
 grep -q 'name="robots" content="noindex, nofollow"' "$dist/index.html" || die "noindex not added"
 
-# 2b) Browser-enforced network lockdown (CSP meta, first in <head> so it precedes every script).
+# 2b) Browser-enforced network lockdown. The CSP <meta> is inserted as the FIRST thing in <head> (not after some anchor), and the build FAILS if anything that
+#     can load or run content (script, link, style, img, iframe, object, embed, video/audio/source, base, form, svg) appears before it -- a parser-blocking script
+#     placed before the policy would run unrestricted (Codex P2 on PR #2). The charset declaration must still fall inside the first 1024 bytes.
 if grep -q 'Content-Security-Policy' "$dist/index.html"; then die "index.html already carries a CSP; review patch-build.sh"; fi
-python3 -I - "$dist/index.html" "$PR_PAGE_CSP" <<'PY'
-import sys
+python3 -I - "$dist/index.html" "$PR_PAGE_CSP" <<'PY' || die "could not place the CSP safely at the start of <head> (see above)"
+import re, sys
 path, csp = sys.argv[1], sys.argv[2]
 html = open(path, encoding="utf-8").read()
-anchor = '<meta charset="UTF-8" />'
-assert html.count(anchor) == 1, "charset anchor"
-html = html.replace(anchor, anchor + f'\n    <meta http-equiv="Content-Security-Policy" content="{csp}" />')
+heads = list(re.finditer(r"<head(?:\s[^>]*)?>", html, flags=re.I))
+if len(heads) != 1:
+    print(f"::error::expected exactly one <head> tag, found {len(heads)}", file=sys.stderr); sys.exit(1)
+RISKY = re.compile(r"<\s*(script|link|style|img|iframe|frame|object|embed|video|audio|source|track|base|form|svg|input|meta\s+http-equiv\s*=\s*[\"']?refresh)\b", re.I)
+before = html[: heads[0].end()]
+m = RISKY.search(before)
+if m:
+    print(f"::error::executable / loading content ({m.group(0)}) comes before <head>, i.e. before the CSP can apply", file=sys.stderr); sys.exit(1)
+tag = f'\n    <meta http-equiv="Content-Security-Policy" content="{csp}" />'
+html = html[: heads[0].end()] + tag + html[heads[0].end():]
+csp_at = html.index("Content-Security-Policy")
+m = RISKY.search(html)
+if m and m.start() < csp_at:
+    print(f"::error::{m.group(0)} still precedes the CSP", file=sys.stderr); sys.exit(1)
+cs = re.search(r"<meta\s+charset\s*=", html, flags=re.I)
+if not cs or cs.start() > 1024:
+    print("::error::the charset declaration is missing or beyond the first 1024 bytes after inserting the CSP", file=sys.stderr); sys.exit(1)
 open(path, "w", encoding="utf-8").write(html)
 PY
 grep -q 'http-equiv="Content-Security-Policy"' "$dist/index.html" || die "CSP not added"
