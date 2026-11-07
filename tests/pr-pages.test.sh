@@ -1,0 +1,311 @@
+#!/usr/bin/env bash
+# Offline tests for .github/scripts/pr-pages/ and the pages.yml assemble step.
+# Run:  bash tests/pr-pages.test.sh        (needs git, jq, python3; no network, no GitHub)
+set -uo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+S="$ROOT/.github/scripts/pr-pages"
+T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+pass=0; fail=0
+ok()   { pass=$((pass+1)); echo "  ok   - $1"; }
+bad()  { fail=$((fail+1)); echo "  FAIL - $1"; }
+expect_ok()   { local n="$1"; shift; if "$@" >"$T/out" 2>&1; then ok "$n"; else bad "$n"; sed 's/^/        /' "$T/out"; fi; }
+expect_fail() { local n="$1"; shift; if "$@" >"$T/out" 2>&1; then bad "$n (unexpectedly succeeded)"; else ok "$n"; fi; }
+
+SHA=a3d1872fad787f53d4e4bd833fa7134cca1f379f
+SLUG=pr-494-a3d1872
+pull() { jq -n --arg sha "${2:-$SHA}" --arg st "${3:-open}" --arg hr "${4:-perusonao/teto-pizza-game}" --arg u "${5:-perusonao}" \
+  '{state:$st,user:{login:$u},head:{sha:$sha,repo:{full_name:$hr}},base:{repo:{full_name:"perusonao/teto-pizza-game"}}}' > "$1"; }
+v() { ( export ACTION="$1" PR_NUMBER="${2:-494}" SHA="${3:-$SHA}" CONFIRM="${4:-$SLUG}" SOURCE_REPO="${5:-perusonao/teto-pizza-game}" PULL_JSON_FILE="$T/pull.json"; bash "$S/validate-inputs.sh" ); }
+
+echo "validate-inputs"
+pull "$T/pull.json"
+expect_ok   "deploy: open same-repo PR, head == sha" v deploy
+expect_fail "deploy: short sha refused"            v deploy 494 a3d1872 pr-494-a3d1872
+expect_fail "deploy: branch name refused"          v deploy 494 claude/teto-pizza-gauge-phase2-31dws7
+expect_fail "deploy: uppercase sha refused"        v deploy 494 "${SHA^^}"
+expect_fail "deploy: confirm typo refused"         v deploy 494 "$SHA" pr-494-a3d187
+expect_fail "deploy: wrong PR number vs confirm"   v deploy 495 "$SHA" "$SLUG"
+expect_fail "deploy: non-numeric PR refused"       v deploy "494;rm" "$SHA" "$SLUG"
+expect_fail "deploy: foreign source repo refused"  v deploy 494 "$SHA" "$SLUG" someone/else
+pull "$T/pull.json" "$SHA" closed;                 expect_fail "deploy: closed PR refused" v deploy
+pull "$T/pull.json" "$SHA" open fork/teto;         expect_fail "deploy: fork head refused" v deploy
+pull "$T/pull.json" bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb; expect_fail "deploy: SHA is not the PR head (stale)" v deploy
+expect_fail "deploy: trailing newline in sha refused"   v deploy 494 "$SHA"$'\n' "$SLUG"
+expect_fail "deploy: leading zero PR number refused"    v deploy 0494 "$SHA" pr-0494-a3d1872
+expect_fail "deploy: 7-digit PR number refused"         v deploy 1234567 "$SHA" pr-1234567-a3d1872
+expect_fail "deploy: PR number with newline refused"    v deploy $'494\nx' "$SHA" "$SLUG"
+expect_fail "deploy: slug with path traversal refused"  v deploy 494 "$SHA" "pr-494-../../x"
+expect_fail "deploy: empty action refused"              v ""
+pull "$T/pull.json" "$SHA" open perusonao/teto-pizza-game someone-else; expect_fail "deploy: PR by a non-allow-listed author refused" v deploy
+pull "$T/pull.json" "$SHA" open perusonao/teto-pizza-game perusonao;    expect_ok   "deploy: allow-listed author accepted" v deploy
+
+echo "validate-inputs: source_sha (a descendant of the PR head, verification-only add-on)"
+SRC=8137dc3bd5b1b1dc3b2cc8a0c2b8bbf1c2f3a4d5
+SRC_SLUG=pr-494-8137dc3
+cmp_json() { jq -n --arg st "${2:-ahead}" --argjson ahead "${3:-3}" --argjson behind "${4:-0}" --argjson files "$5" '{status:$st,ahead_by:$ahead,behind_by:$behind,files:$files}' > "$1"; }
+FILES_OK='[{"filename":"src/preview/b19HvSeeds.ts"},{"filename":"src/preview/hvSeeds.ts"},{"filename":"docs/reports/x.md"}]'
+vs() { ( export ACTION=deploy PR_NUMBER=494 SHA="$SHA" SOURCE_SHA="${1:-$SRC}" CONFIRM="${2:-$SRC_SLUG}" SOURCE_REPO=perusonao/teto-pizza-game PULL_JSON_FILE="$T/pull.json" COMPARE_JSON_FILE="$T/cmp.json"; bash "$S/validate-inputs.sh" ); }
+cmp_json "$T/cmp.json" ahead 3 0 "$FILES_OK"
+expect_ok   "source_sha: strictly ahead, only src/preview + docs changed, slug uses the source sha" vs
+expect_fail "source_sha: confirm must be the SOURCE slug, not the PR head slug" vs "$SRC" "$SLUG"
+expect_fail "source_sha: short sha refused"                vs 8137dc3 "$SRC_SLUG"
+expect_fail "source_sha: equal to the PR head refused"     vs "$SHA" "$SLUG"
+cmp_json "$T/cmp.json" diverged 3 2 "$FILES_OK";   expect_fail "source_sha: diverged branch refused" vs
+cmp_json "$T/cmp.json" behind 0 3 "$FILES_OK";     expect_fail "source_sha: behind the PR head refused" vs
+cmp_json "$T/cmp.json" identical 0 0 "$FILES_OK";  expect_fail "source_sha: identical refused" vs
+cmp_json "$T/cmp.json" ahead 21 0 "$FILES_OK";     expect_fail "source_sha: more than 20 commits ahead refused" vs
+cmp_json "$T/cmp.json" ahead 3 0 '[{"filename":"src/preview/b19HvSeeds.ts"},{"filename":"package.json"}]'; expect_fail "source_sha: package.json change refused" vs
+cmp_json "$T/cmp.json" ahead 3 0 '[{"filename":"src/state/persistence.ts"}]';  expect_fail "source_sha: game-logic change refused" vs
+cmp_json "$T/cmp.json" ahead 3 0 '[{"filename":".github/workflows/ci.yml"}]';  expect_fail "source_sha: workflow change refused" vs
+cmp_json "$T/cmp.json" ahead 3 0 '[{"filename":"src/preview/ok.ts","previous_filename":"src/App.tsx"}]'; expect_fail "source_sha: rename out of a forbidden path refused" vs
+cmp_json "$T/cmp.json" ahead 3 0 '[{"filename":"src/preview-evil/x.ts"}]';     expect_fail "source_sha: look-alike directory src/preview-evil refused" vs
+cmp_json "$T/cmp.json" ahead 3 0 "$(jq -n '[range(300)|{filename:"docs/a\(.).md"}]')"; expect_fail "source_sha: 300+ files (possibly truncated) refused" vs
+pull "$T/pull.json" bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb; cmp_json "$T/cmp.json" ahead 3 0 "$FILES_OK"; expect_fail "source_sha: the PR head must still be current" vs
+pull "$T/pull.json" "$SHA" open perusonao/teto-pizza-game someone-else;      expect_fail "source_sha: author allow-list still applies" vs
+pull "$T/pull.json"
+expect_ok   "source_sha empty: behaviour unchanged (PR head slug)" v deploy
+vr() { ( export ACTION=remove PR_NUMBER=494 SHA="$SHA" SOURCE_SHA="${1-}" CONFIRM="${2:-$SRC_SLUG}" SOURCE_REPO=perusonao/teto-pizza-game; bash "$S/validate-inputs.sh" ); }
+expect_ok   "remove: with the same source_sha the add-on slug is accepted" vr "$SRC" "$SRC_SLUG"
+expect_fail "remove: WITHOUT source_sha the add-on slug is refused (the slug would be the PR head's)" vr "" "$SRC_SLUG"
+expect_ok   "remove: without source_sha the PR head slug still works" vr "" "$SLUG"
+pull "$T/pull.json" "$SHA" open perusonao/teto-pizza-game someone-else; expect_ok   "deploy: author allow-list is configurable (ALLOWED_PR_AUTHORS)" env ALLOWED_PR_AUTHORS=a,someone-else,b bash -c 'ACTION=deploy PR_NUMBER=494 SHA='"$SHA"' CONFIRM='"$SLUG"' SOURCE_REPO=perusonao/teto-pizza-game PULL_JSON_FILE='"$T"'/pull.json bash '"$S"'/validate-inputs.sh'
+pull "$T/pull.json" "$SHA" open perusonao/teto-pizza-game perusonao
+echo "  -- the PR moved on during the build (re-validation before publish, same script)"
+pull "$T/pull.json" cccccccccccccccccccccccccccccccccccccccc; expect_fail "re-validate: head changed after the build -> refused" v deploy
+pull "$T/pull.json" "$SHA" closed;                             expect_fail "re-validate: PR closed after the build -> refused" v deploy
+pull "$T/pull.json"
+expect_ok   "remove: needs no API / open PR"       v remove
+expect_fail "remove: confirm still required"       v remove 494 "$SHA" nope
+
+echo "apply / guard / push (temp repo with a bare remote)"
+git init -q --bare -b main "$T/remote.git"
+git init -q -b main "$T/w" && cd "$T/w"
+git config user.email t@t; git config user.name t
+mkdir -p site/assets .github/workflows pr/pr-1-aaaaaaa; echo ROOT > site/index.html; echo a > site/assets/a.js
+echo wf > .github/workflows/x.yml; echo OLD > pr/pr-1-aaaaaaa/index.html; echo r > README.md
+git add -A; git commit -qm init; git remote add origin "$T/remote.git"; git push -q origin main
+mkdir -p "$T/dist/assets"; echo '<html>page</html>' > "$T/dist/index.html"; echo x > "$T/dist/assets/x.js"
+tree_outside() { git ls-files -s | awk -F'\t' -v p="pr/$1/" 'index($2,p)!=1' | sha256sum; }
+B="$(tree_outside $SLUG)"
+
+( export PR_NUMBER=494 SHA=$SHA RUN_ID=1; expect_ok "deploy stages pr/<slug> only" bash "$S/apply.sh" deploy $SLUG "$T/dist" )
+[[ "$(tree_outside $SLUG)" == "$B" ]] && ok "deploy leaves site/, README, workflows, other pr/ untouched" || bad "deploy touched files outside target"
+git diff --cached --name-only | grep -qv "^pr/$SLUG/" && bad "staged path outside target" || ok "every staged path is under pr/$SLUG/"
+expect_ok "push.sh commits + pushes" bash "$S/push.sh" $SLUG "PR page deploy: $SLUG"
+[[ "$(git rev-parse HEAD)" == "$(git --git-dir="$T/remote.git" rev-parse main)" ]] && ok "remote main == pushed commit" || bad "remote not updated"
+jq -e --arg sha "$SHA" '.sha==$sha and .pr=="494"' pr/$SLUG/preview-meta.json >/dev/null && ok "preview-meta.json records PR + sha" || bad "meta"
+
+echo "  -- concurrent push: another job pushed first (non-overlapping path)"
+git clone -q "$T/remote.git" "$T/other" && ( cd "$T/other" && git config user.email o@o && git config user.name o && echo n > docs-other.txt && git add -A && git commit -qm other && git push -q origin main )
+echo changed >> "$T/dist/index.html"; ( export PR_NUMBER=494 SHA=$SHA RUN_ID=2; bash "$S/apply.sh" deploy $SLUG "$T/dist" >/dev/null )
+expect_ok "push.sh rebases onto the concurrent push and re-guards" bash "$S/push.sh" $SLUG "redeploy"
+git --git-dir="$T/remote.git" show main:docs-other.txt >/dev/null 2>&1 && ok "concurrent (non-site) change preserved" || bad "concurrent change lost"
+
+echo "  -- concurrent push that changes the shared site/ (PR #5 idea): refused, nothing published"
+( cd "$T/other" && git pull -q origin main && echo n > site/landed.txt && git add -A && git commit -qm "site landed" && git push -q origin main )
+echo changed2 >> "$T/dist/index.html"; ( export PR_NUMBER=494 SHA=$SHA RUN_ID=21; bash "$S/apply.sh" deploy $SLUG "$T/dist" >/dev/null )
+REMOTE_BEFORE="$(git --git-dir="$T/remote.git" rev-parse main)"
+expect_fail "push.sh refuses when site/ changed on main between the preflight and the push" bash "$S/push.sh" $SLUG "redeploy 2"
+[[ "$(git --git-dir="$T/remote.git" rev-parse main)" == "$REMOTE_BEFORE" ]] && ok "remote main untouched by the refused publish" || bad "remote main moved"
+git reset -q --hard origin/main 2>/dev/null; git fetch -q origin; git reset -q --hard origin/main; git clean -fdq
+
+echo "  -- guard"
+echo hack > site/index.html; git add site/index.html
+expect_fail "guard refuses a staged change to the shared root" bash "$S/guard-paths.sh" $SLUG
+git reset -q --hard HEAD
+ln -s /etc/passwd pr/$SLUG/link; git add pr/$SLUG/link
+expect_fail "guard refuses a symlink" bash "$S/guard-paths.sh" $SLUG
+git reset -q --hard HEAD; git clean -fdq
+echo z > pr/pr-1-aaaaaaa/index.html; git add -A
+expect_fail "guard refuses a change to ANOTHER PR page" bash "$S/guard-paths.sh" $SLUG
+git reset -q --hard HEAD
+ln -s /etc/passwd "$T/dist/evil"; expect_fail "apply refuses a non-regular file in dist" env PR_NUMBER=494 SHA=$SHA bash "$S/apply.sh" deploy $SLUG "$T/dist"; rm "$T/dist/evil"; git reset -q --hard HEAD; git clean -fdq
+expect_fail "guard refuses a bad slug (path traversal)" bash "$S/guard-paths.sh" "pr-1-../../x"
+
+echo hidden > "$T/dist/.secret"; expect_fail "apply refuses dotfiles in dist" env PR_NUMBER=494 SHA=$SHA bash "$S/apply.sh" deploy $SLUG "$T/dist"; rm "$T/dist/.secret"; git reset -q --hard HEAD; git clean -fdq
+
+echo "  -- cap on published pages"
+for i in 2 3 4 5; do mkdir -p pr/pr-$i-bbbbbbb; echo x > pr/pr-$i-bbbbbbb/index.html; done; git add -A; git commit -qm fill
+expect_fail "apply refuses a 6th PR page" env PR_NUMBER=494 SHA=$SHA bash "$S/apply.sh" deploy pr-494-cccccc1 "$T/dist"
+git reset -q --hard HEAD; git clean -fdq; git reset -q --hard origin/main
+
+echo "  -- remove"
+git pull -q origin main
+B2="$(tree_outside $SLUG)"
+expect_ok "remove stages only the target" bash "$S/apply.sh" remove $SLUG
+[[ "$(tree_outside $SLUG)" == "$B2" ]] && ok "remove leaves everything else untouched" || bad "remove touched other files"
+[[ ! -e pr/$SLUG ]] && ok "page directory is gone" || bad "page still present"
+expect_ok "push.sh commits removal" bash "$S/push.sh" $SLUG "PR page remove: $SLUG"
+expect_fail "remove of a missing page fails loudly" bash "$S/apply.sh" remove $SLUG
+[[ -d pr/pr-1-aaaaaaa ]] && ok "other PR page survives" || bad "other PR page lost"
+
+echo "  -- rollback"
+( export PR_NUMBER=494 SHA=$SHA RUN_ID=3; bash "$S/apply.sh" deploy $SLUG "$T/dist" >/dev/null ); bash "$S/push.sh" $SLUG "PR page deploy" >"$T/p.out"; P="$(grep '^sha=' "$T/p.out" | cut -d= -f2)"
+expect_ok "rollback reverts our commit when it is the tip" bash "$S/rollback.sh" $SLUG "$P"
+git --git-dir="$T/remote.git" ls-tree -r --name-only main | grep -q "^pr/$SLUG/" && bad "page still on main after rollback" || ok "page gone from main after rollback"
+git fetch -q origin; git checkout -q main; git reset -q --hard origin/main
+( export PR_NUMBER=494 SHA=$SHA RUN_ID=4; bash "$S/apply.sh" deploy $SLUG "$T/dist" >/dev/null ); bash "$S/push.sh" $SLUG "PR page deploy" >"$T/p.out"; P="$(grep '^sha=' "$T/p.out" | cut -d= -f2)"
+( cd "$T/other" && git pull -q origin main && echo m > site/moved.txt && git add -A && git commit -qm moved && git push -q origin main )
+bash "$S/rollback.sh" $SLUG "$P" 2>&1 | grep -q 'reverted=false' && ok "rollback refuses when main moved on" || bad "rollback should have refused"
+
+echo "patch-build (fake dist)"
+cd "$ROOT"
+mk() { rm -rf "$T/d"; mkdir -p "$T/d/assets"
+  printf '{ "start_url": "/teto-pizza-game/", "scope": "/teto-pizza-game/" }' > "$T/d/manifest.webmanifest"
+  printf '<!doctype html><html><head><meta charset="UTF-8" /><script src="/teto-pizza-game-preview/pr/%s/assets/i.js"></script></head></html>' $SLUG > "$T/d/index.html"
+  cat > "$T/d/assets/i.js" <<JS
+const a=\`teto-pizza-preview-save-v1\`,b="teto-pizza-cheese-canvas",c='teto-pizza-preview-hint5-optin',d="teto.dev.researchIdentify",e="teto.dev.hint5Ladder";
+const base="/teto-pizza-game-preview/pr/$SLUG/";const lookalike="tetoXdevXresearchIdentify";const css="teto-card is-open";
+JS
+}
+mk; expect_ok "patch: all assertions pass on a good dist" bash "$S/patch-build.sh" "$T/d" $SLUG
+for k in teto-pizza-preview-save-v1 teto-pizza-cheese-canvas teto-pizza-preview-hint5-optin teto.dev.researchIdentify teto.dev.hint5Ladder; do
+  grep -qF "${k}--${SLUG}" "$T/d/assets/i.js" && ! grep -qE "[\"'\`]${k//./\\.}[\"'\`]" "$T/d/assets/i.js" && ok "key namespaced, bare literal gone: $k" || bad "key not namespaced: $k"
+done
+grep -q 'tetoXdevXresearchIdentify"' "$T/d/assets/i.js" && ok "unrelated look-alike string untouched" || bad "look-alike altered"
+grep -q "\"scope\": \"/teto-pizza-game-preview/pr/$SLUG/\"" "$T/d/manifest.webmanifest" && ok "manifest scope/start_url point at the PR path" || bad "manifest"
+grep -q noindex "$T/d/index.html" && ok "noindex added" || bad "noindex"
+mk; sed -i 's/teto-pizza-preview-save-v1/other-key/' "$T/d/assets/i.js"; expect_fail "patch: fails if the save key literal disappears (no silent sharing)" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo 'localStorage.getItem("teto-pizza-new-opt-in")' >> "$T/d/assets/i.js"; expect_fail "patch: fails on an UNKNOWN teto- key (fail-closed)" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo 'k="teto-pizza-"+x' >> "$T/d/assets/i.js"; expect_fail "patch: fails on a concatenated teto- key prefix" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo 'fetch("/teto-pizza-game/x")' >> "$T/d/assets/i.js"; expect_fail "patch: fails on a reference to the production base" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo 'fetch("/teto-pizza-game-preview/assets/x.js")' >> "$T/d/assets/i.js"; expect_fail "patch: fails on a reference to the shared Preview root" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo 'k="AIzaSyA1234567890abcdefghijklmnopqrstuv"' >> "$T/d/assets/i.js"; expect_fail "patch: fails if a Firebase-style API key is baked in" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo x > "$T/d/.hidden"; expect_fail "patch: fails on dotfiles" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; bash "$S/patch-build.sh" "$T/d" $SLUG >/dev/null
+grep -q 'http-equiv="Content-Security-Policy"' "$T/d/index.html" && grep -q "connect-src 'self'" "$T/d/index.html" && ok "CSP meta added (connect-src 'self')" || bad "CSP missing"
+[[ "$(grep -n -E 'Content-Security-Policy|<script' "$T/d/index.html" | head -1 | grep -c Content-Security-Policy)" == 1 ]] && ok "CSP comes before the first script" || bad "CSP order"
+mk; sed -i 's#<head>#<head><script>localStorage.getItem("teto-pizza-preview-save-v1")</script>#' "$T/d/index.html"
+expect_fail "patch: an inline <script> in index.html (even one holding a storage key) is refused: index.html may only load external modules (the CSP would block it as well)" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo 'export const k="teto-pizza-preview-save-v1";' > "$T/d/assets/w.mjs"; echo '{"k":"teto-pizza-cheese-canvas"}' > "$T/d/assets/c.json"
+expect_ok "patch: .mjs / .json are scanned as well" bash "$S/patch-build.sh" "$T/d" $SLUG
+! grep -rqE "[\"'\`]teto-pizza-(preview-save-v1|cheese-canvas)[\"'\`]" "$T/d" && ok "no bare key in any emitted file" || bad "bare key left in a non-js file"
+mk; printf '\x00\x01teto-pizza-preview-save-v1\x00' > "$T/d/assets/blob.bin"; expect_fail "patch: a binary file embedding a key fails the build" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo 'k="teto.dev.newThing"' >> "$T/d/assets/i.js"; expect_fail "patch: unknown teto.dev.* flag fails closed" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; sed -i 's#<meta charset="UTF-8" />#<meta charset="UTF-8" /><meta http-equiv="Content-Security-Policy" content="x">#' "$T/d/index.html"; expect_fail "patch: refuses an index.html that already has a CSP" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; bash "$S/patch-build.sh" "$T/d" $SLUG >/dev/null; expect_fail "patch: refuses to run twice on the same dist" bash "$S/patch-build.sh" "$T/d" $SLUG
+
+echo "patch-build: other documents, workers (Codex P1 x2 on PR #2)"
+echo "patch-build: the CSP must precede every script (Codex P2 on PR #2, round 2)"
+mk; sed -i 's#<head><meta charset="UTF-8" />#<head><script src="/teto-pizza-game-preview/pr/'$SLUG'/assets/early.js"></script><meta charset="UTF-8" />#' "$T/d/index.html"; grep -q 'early.js' "$T/d/index.html" || bad "fixture did not place the early script"
+expect_ok "patch: a script placed BEFORE the charset meta is fine only because the CSP is now inserted ahead of it" bash "$S/patch-build.sh" "$T/d" $SLUG
+python3 -I - "$T/d/index.html" <<'PY' && ok "patched index.html: CSP precedes the early script" || bad "CSP does not precede the early script"
+import sys; h=open(sys.argv[1]).read(); sys.exit(0 if h.index("Content-Security-Policy") < h.index("early.js") else 1)
+PY
+mk; sed -i 's#<!doctype html><html><head>#<!doctype html><html><script src="x.js"></script><head>#' "$T/d/index.html"; expect_fail "patch: a script BEFORE <head> is refused (it would run before any CSP)" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; sed -i 's#<head>#<link rel="stylesheet" href="x.css"><head>#' "$T/d/index.html"; expect_fail "patch: a <link> before <head> is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><!-- <head> --><meta charset="UTF-8" /><script src="/teto-pizza-game-preview/pr/%s/assets/i.js"></script></html>' $SLUG > "$T/d/index.html"; expect_fail "patch (Codex P2 r4): a commented-out <head> with an IMPLICIT head is refused (no CSP could be placed first)" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><!-- <head> --><head><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_fail "patch: a commented-out <head> before the real <head> is refused (any comment is: browser and parser may disagree)" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><head><!-- <script src="x.js"></script> --><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_fail "patch: a <script> inside a COMMENT is refused (any comment is)" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><script>var h="<head>";</script><head><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_fail "patch: a script BEFORE <head> is refused even if its text mentions <head>" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><head data-x="<script>"><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_ok "patch: markup-looking text inside an ATTRIBUTE VALUE is not a tag" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><HEAD><meta charset="UTF-8" /></HEAD></html>' > "$T/d/index.html"; expect_ok "patch: an upper-case <HEAD> is found" bash "$S/patch-build.sh" "$T/d" $SLUG
+echo "patch-build: parser / browser differentials fail closed (Codex P2 on PR #2, round 5)"
+mk; printf '<!doctype html><html><!--><script src="/teto-pizza-game-preview/pr/%s/assets/early.js"></script><!-- --><head><meta charset="UTF-8" /></head></html>' $SLUG > "$T/d/index.html"; expect_fail "patch (Codex r5 fixture): '<!-->' hiding a script from HTMLParser is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><!--x--><head><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_fail "patch: ANY comment in index.html is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><head><meta charset="UTF-8" /><![CDATA[ <script src=x></script> ]]></head></html>' > "$T/d/index.html"; expect_fail "patch: a CDATA section is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><head><meta charset="UTF-8" /><?php x ?></head></html>' > "$T/d/index.html"; expect_fail "patch: a processing instruction is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><head><meta charset="UTF-8" /><!bogus <script src=x></script>></head></html>' > "$T/d/index.html"; expect_fail "patch: a bogus comment (<!x ...>) is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!DOCTYPE html><html><head><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_ok "patch: an upper-case DOCTYPE is the one '<!' allowed" bash "$S/patch-build.sh" "$T/d" $SLUG
+for tag in svg math template noscript xmp plaintext textarea noembed noframes style; do
+  mk; printf '<!doctype html><html><head><meta charset="UTF-8" /></head><body><%s>x</%s></body></html>' $tag $tag > "$T/d/index.html"; expect_fail "patch: <$tag> in index.html is outside a Vite shell and refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+done
+mk; printf '<!doctype html><html><head><meta charset="UTF-8" /><script>alert(1)</script></head></html>' > "$T/d/index.html"; expect_fail "patch: an inline <script> is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><head><meta charset="UTF-8" /><title>t</title></head><body><div id="root"></div></body></html>' > "$T/d/index.html"; expect_ok "patch: a typical Vite shell (meta, title, div#root) passes" bash "$S/patch-build.sh" "$T/d" $SLUG
+echo "patch-build: the shell's STRUCTURE, not only its tag names (Codex P2 on PR #2, round 6)"
+mk; printf '<!doctype html><html><div></div><head><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_fail "patch (Codex r6 fixture): body content (<div>) BEFORE the explicit <head> is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html>hello<head><meta charset="UTF-8" /></head>' > "$T/d/index.html"; expect_fail "patch: text before <head> (an implicit head) is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><div></div><html><head><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_fail "patch: a <div> before <html> is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><meta charset="UTF-8" /><head></head></html>' > "$T/d/index.html"; expect_fail "patch: a <meta> before the explicit <head> is refused (the head would be implicit)" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html>&#65;<head><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_fail "patch (Codex r7 fixture): a numeric character reference (&#65;) before <head> is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html>&nbsp;<head><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_fail "patch (Codex r7 fixture): a named character reference (&nbsp;) before <head> is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html>\xc2\xa0<head><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_fail "patch: a raw U+00A0 (NBSP, not HTML whitespace) before <head> is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '\xef\xbb\xbf<!doctype html><html><head><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_fail "patch: a BOM before the doctype is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html>\x0b<head><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_fail "patch: a vertical tab (not HTML whitespace) before <head> is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '\n\t <!DOCTYPE html>\r\n<html lang="ja">\f\n  <head><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_ok "patch: leading/inner HTML whitespace (space, tab, LF, FF, CR) around doctype and <html> is fine" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><html><head><meta charset="UTF-8" /></head></html></html>' > "$T/d/index.html"; expect_fail "patch: two <html> tags are refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html>\n<html lang="ja">\n  <head>\n    <meta charset="UTF-8" />\n  </head>\n  <body><div id="root"></div></body>\n</html>\n' > "$T/d/index.html"; expect_ok "patch: the real Vite layout (doctype, html lang, whitespace, head, body) passes" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<head><meta charset="UTF-8" /></head><body></body>' > "$T/d/index.html"; expect_ok "patch: a document that starts directly with <head> passes" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; sed -i 's#<head>##' "$T/d/index.html"; expect_fail "patch: an index.html without a <head> tag is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; sed -i 's#<head>#<head><head>#' "$T/d/index.html"; expect_fail "patch: two <head> tags are refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; sed -i 's#<meta charset="UTF-8" />#<meta charset="UTF-8" /><meta http-equiv="refresh" content="0;url=/x">#' "$T/d/index.html"; expect_ok "patch: (a refresh meta AFTER the CSP is not before it)" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; python3 -I - "$T/d/index.html" <<'PY'
+import sys; p=sys.argv[1]; h=open(p).read(); h=h.replace("<head>","<head>"+("<!--"+"x"*1100+"-->")+"",1); open(p,"w").write(h)
+PY
+expect_fail "patch: a charset pushed beyond the first 1024 bytes is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; sed -i 's#</head>#<iframe src="x"></iframe></head>#' "$T/d/index.html"; expect_fail "patch: an <iframe> in index.html is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; sed -i 's#</head>#<base href="/x/"></head>#' "$T/d/index.html"; expect_fail "patch: a <base> in index.html is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><script src="x.js"></script>' > "$T/d/escape.html"; expect_fail "patch: a SECOND HTML document in dist is refused (it would run without the CSP)" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; mkdir -p "$T/d/sub"; printf '<!doctype html>' > "$T/d/sub/index.html"; expect_fail "patch: a nested index.html is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<svg xmlns="http://www.w3.org/2000/svg"><script>1</script></svg>' > "$T/d/assets/x.svg"; expect_fail "patch: an SVG document is refused (scripts run when it is framed or opened)" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<x/>' > "$T/d/assets/x.xml"; expect_fail "patch: an XML document is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf 'x' > "$T/d/assets/x.HTM"; expect_fail "patch: .HTM (case-insensitive) is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf 'x' > "$T/d/assets/x.wasm"; expect_fail "patch: an unknown file type fails closed" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf 'x' > "$T/d/assets/noext"; expect_fail "patch: a file without an extension fails closed" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo 'const w=new Worker(URL.createObjectURL(b));' >> "$T/d/assets/i.js"; expect_fail "patch: new Worker( in the bundle is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo 'const w = new  SharedWorker ("w.js");' >> "$T/d/assets/i.js"; expect_fail "patch: new SharedWorker ( (spacing) is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo 'navigator.serviceWorker . register("/sw.js");' >> "$T/d/assets/i.js"; expect_fail "patch: a Service Worker registration is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo 'importScripts("x.js");' >> "$T/d/assets/i.js"; expect_fail "patch: importScripts( is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; echo 'const msg="Worker pool";const w2=networkWorker;' >> "$T/d/assets/i.js"; expect_ok "patch: the word Worker alone (no constructor) is not a false positive" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf 'png' > "$T/d/assets/a.png"; printf 'w' > "$T/d/assets/a.webp"; printf '{}' > "$T/d/assets/a.json"; printf 'f' > "$T/d/assets/a.woff2"; printf '.a{}' > "$T/d/assets/a.css"; expect_ok "patch: the file types of a real build (png/webp/json/woff2/css/js) pass" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; bash "$S/patch-build.sh" "$T/d" $SLUG >/dev/null
+for d in "worker-src 'none'" "frame-src 'none'" "child-src 'none'" "connect-src 'self'" "object-src 'none'"; do grep -qF "$d" "$T/d/index.html" && ok "patched CSP carries: $d" || bad "patched CSP is missing: $d"; done
+grep -qE "worker-src 'self'|blob:;? *(manifest|object|base)" "$T/d/index.html" && bad "CSP must not allow workers from self/blob" || ok "CSP no longer allows workers from 'self' or blob:"
+
+echo "live checks (local http server stands in for github.io)"
+LROOT="$T/live"; mkdir -p "$LROOT/teto-pizza-game-preview"; cp -R "$ROOT/site/." "$LROOT/teto-pizza-game-preview/"
+PORT=$((20000 + RANDOM % 20000)); ( cd "$LROOT" && exec python3 -m http.server $PORT --bind 127.0.0.1 >/dev/null 2>&1 ) & SRV=$!
+sleep 1; export LIVE_ORIGIN="http://127.0.0.1:$PORT" TRIES=2 INTERVAL=1
+cd "$ROOT"
+expect_ok   "check-root-synced: whole live site/ == site/ on main" bash "$S/check-root-synced.sh"
+LM="$LROOT/teto-pizza-game-preview/manifest.webmanifest"; cp "$LM" "$T/manifest.bak"; echo "  " >> "$LM"
+expect_fail "check-root-synced (Codex P2): a pending change ONLY in manifest.webmanifest is refused" bash "$S/check-root-synced.sh"
+cp "$T/manifest.bak" "$LM"
+LI="$LROOT/teto-pizza-game-preview/icons/icon-32.png"; cp "$LI" "$T/icon.bak"; printf 'x' >> "$LI"
+expect_fail "check-root-synced (Codex P2): a pending change ONLY in an icon is refused" bash "$S/check-root-synced.sh"
+cp "$T/icon.bak" "$LI"
+LA="$(cd "$ROOT" && git ls-files site/assets | grep -v index- | head -1)"; LA="$LROOT/teto-pizza-game-preview/${LA#site/}"; cp "$LA" "$T/asset.bak"; printf '/*x*/' >> "$LA"
+expect_fail "check-root-synced (Codex P2): a pending change ONLY in an unreferenced asset is refused" bash "$S/check-root-synced.sh"
+cp "$T/asset.bak" "$LA"
+mv "$LA" "$T/asset.moved"
+expect_fail "check-root-synced: a tracked file missing on the live site is refused" bash "$S/check-root-synced.sh"
+mv "$T/asset.moved" "$LA"
+expect_ok   "check-root-synced: identical again after restoring the files" bash "$S/check-root-synced.sh"
+echo "<!-- drift -->" >> "$LROOT/teto-pizza-game-preview/index.html"
+expect_fail "check-root-synced: refuses when live root differs (pending shared update)" bash "$S/check-root-synced.sh"
+cp "$ROOT/site/index.html" "$LROOT/teto-pizza-game-preview/index.html"
+export EXPECT_RUN_ID=777-1
+expect_fail "verify-live deploy: fails while the page is absent" bash "$S/verify-live.sh" deploy $SLUG
+mkdir -p "$LROOT/teto-pizza-game-preview/pr/$SLUG/assets"
+echo "<script src=\"/teto-pizza-game-preview/pr/$SLUG/assets/i.js\"></script>" > "$LROOT/teto-pizza-game-preview/pr/$SLUG/index.html"
+echo '{"workflowRun":"700-1"}' > "$LROOT/teto-pizza-game-preview/pr/$SLUG/preview-meta.json"
+expect_fail "verify-live deploy: a page left by an EARLIER run does not satisfy it (redeploy)" bash "$S/verify-live.sh" deploy $SLUG
+echo '{"workflowRun":"777-1"}' > "$LROOT/teto-pizza-game-preview/pr/$SLUG/preview-meta.json"
+expect_ok   "verify-live deploy: this run's marker + root unchanged" bash "$S/verify-live.sh" deploy $SLUG
+( unset EXPECT_RUN_ID; expect_fail "verify-live deploy: refuses to run without EXPECT_RUN_ID" bash "$S/verify-live.sh" deploy $SLUG )
+expect_fail "verify-live remove: fails while the page is still there" bash "$S/verify-live.sh" remove $SLUG
+rm -rf "$LROOT/teto-pizza-game-preview/pr"
+expect_ok   "verify-live remove: 404 + root unchanged" bash "$S/verify-live.sh" remove $SLUG
+kill $SRV 2>/dev/null; wait $SRV 2>/dev/null
+LIVE_ORIGIN="http://127.0.0.1:1" expect_fail "check-root-synced: unreachable live root fails closed" bash "$S/check-root-synced.sh"
+unset LIVE_ORIGIN TRIES INTERVAL
+
+echo "pages.yml assemble step"
+python3 - "$ROOT/.github/workflows/pages.yml" "$T/assemble.sh" <<'PY'
+import sys,yaml
+w=yaml.safe_load(open(sys.argv[1]))
+for st in w['jobs']['deploy']['steps']:
+    if st.get('name','').startswith('Assemble'):
+        open(sys.argv[2],'w').write(st['run'])
+PY
+asm() { ( cd "$1" && bash "$T/assemble.sh" ); }
+mkdir -p "$T/a/site/assets"; echo R > "$T/a/site/index.html"; echo a > "$T/a/site/assets/a.js"
+expect_ok "no pr/: artifact root == site/ exactly" asm "$T/a"
+diff -r "$T/a/site" "$T/a/_pages" >/dev/null && ok "byte-identical to the old 'path: site'" || bad "differs from site/"
+mkdir -p "$T/a/pr/$SLUG"; echo P > "$T/a/pr/$SLUG/index.html"; rm -rf "$T/a/_pages"
+expect_ok "with pr/: published under /pr/" asm "$T/a"
+[[ -f "$T/a/_pages/pr/$SLUG/index.html" && "$(cat "$T/a/_pages/index.html")" == R ]] && ok "root unchanged, PR page added" || bad "layout"
+mkdir -p "$T/a/site/pr"; expect_fail "site/pr collision is refused" asm "$T/a"; rmdir "$T/a/site/pr"
+ln -s /etc/passwd "$T/a/pr/$SLUG/l"; expect_fail "symlink in pr/ is refused" asm "$T/a"
+
+echo; echo "passed: $pass  failed: $fail"; [[ $fail -eq 0 ]]
