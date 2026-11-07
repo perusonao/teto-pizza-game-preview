@@ -8,7 +8,13 @@ T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 pass=0; fail=0
 # SAFETY: the sections below commit, reset --hard and PUSH. They must only ever do that inside the temp dir $T. Calling this before them aborts (exit 99)
 # instead of touching the repository the tests are run from (a wrong cwd once pushed two test commits to this repo's real origin/main).
-guard_tmp() { case "$PWD" in "$T"/*) ;; *) echo "REFUSING to continue: cwd '$PWD' is outside the temp dir '$T'" >&2; exit 99;; esac; }
+# It checks BOTH the cwd and the git repository the cwd belongs to: a failed `git init` / `cd` must never fall through to an enclosing real clone
+# (e.g. TMPDIR set inside the checkout), so the toplevel has to be a repo created under $T.
+guard_tmp() {
+  case "$PWD" in "$T"/*) ;; *) echo "REFUSING to continue: cwd '$PWD' is outside the temp dir '$T'" >&2; exit 99;; esac
+  local top; top="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "REFUSING to continue: '$PWD' is not inside a git repository" >&2; exit 99; }
+  case "$top" in "$T"/*) ;; *) echo "REFUSING to continue: git toplevel '$top' is outside the temp dir '$T'" >&2; exit 99;; esac
+}
 ok()   { pass=$((pass+1)); echo "  ok   - $1"; }
 bad()  { fail=$((fail+1)); echo "  FAIL - $1"; }
 expect_ok()   { local n="$1"; shift; if "$@" >"$T/out" 2>&1; then ok "$n"; else bad "$n"; sed 's/^/        /' "$T/out"; fi; }
@@ -82,7 +88,7 @@ expect_fail "remove: confirm still required"       v remove 494 "$SHA" nope
 
 echo "apply / guard / push (temp repo with a bare remote)"
 git init -q --bare -b main "$T/remote.git"
-git init -q -b main "$T/w" && cd "$T/w"
+git init -q -b main "$T/w" || exit 99; cd "$T/w" || exit 99; guard_tmp
 git config user.email t@t; git config user.name t
 mkdir -p site/assets .github/workflows pr/pr-1-aaaaaaa; echo ROOT > site/index.html; echo a > site/assets/a.js
 echo wf > .github/workflows/x.yml; echo OLD > pr/pr-1-aaaaaaa/index.html; echo r > README.md
@@ -144,8 +150,8 @@ expect_fail "remove of a missing page fails loudly" bash "$S/apply.sh" remove $S
 [[ -d pr/pr-1-aaaaaaa ]] && ok "other PR page survives" || bad "other PR page lost"
 
 echo "  -- remove the LAST page (pr/ disappears: run 42403809324), several pages, a missing page; site/ and README unchanged"
-cd "$T"; rm -rf w2 remote2.git
-git init -q --bare -b main remote2.git; git init -q -b main w2; cd w2
+cd "$T" || exit 99; rm -rf w2 remote2.git
+git init -q --bare -b main remote2.git || exit 99; git init -q -b main w2 || exit 99; cd w2 || exit 99; guard_tmp
 git config user.email t@t; git config user.name t
 mkdir -p site/assets pr/pr-9-ccccccc/assets .github; echo ROOT > site/index.html; echo a > site/assets/a.js; echo manifest > site/manifest.webmanifest
 echo readme > README.md; echo wf > .github/x.yml; echo P > pr/pr-9-ccccccc/index.html; echo j > pr/pr-9-ccccccc/assets/i.js
@@ -172,7 +178,7 @@ expect_ok   "remove: one of several pages succeeds" bash "$S/apply.sh" remove pr
 [[ ! -e pr/pr-7-eeeeeee && -d pr/pr-8-ddddddd ]] && ok "remove: only the chosen page is gone, pr/ and the other page remain" || bad "wrong pages removed"
 [[ "$(find pr -type f | sort | xargs sha256sum | sha256sum)" == "$OTHERS_BEFORE" ]] && ok "remove: the other pages are byte-identical" || bad "other page changed"
 git reset -q --hard HEAD
-cd "$T/w"   # back to the repo the rollback cases below use (NOT $ROOT: they run `git reset --hard` there)
+cd "$T/w" || exit 99; guard_tmp   # back to the repo the rollback cases below use (NOT $ROOT: they run `git reset --hard` there)
 
 echo "  -- rollback"
 guard_tmp
