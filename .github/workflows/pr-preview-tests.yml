@@ -1,0 +1,48 @@
+name: PR preview pipeline tests
+
+# Checks for the per-PR Cloudflare preview pipeline (pr-preview/, .github/workflows/deploy-pr-preview.yml).
+# pull_request only, no secrets, nothing is deployed. It also fails a PR that touches the shared Preview.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      - name: Unit and static workflow tests
+        run: node --test pr-preview/*.test.mjs
+
+      - name: Workflow files are valid YAML
+        run: python3 -c "import glob, yaml; [yaml.safe_load(open(f)) for f in sorted(glob.glob('.github/workflows/*.yml'))]; print('yaml ok')"
+
+      - name: The shared Preview is untouched
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          changed="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"
+          echo "$changed"
+          if echo "$changed" | grep -Eq '^(site/|README\.md$|\.github/workflows/(deploy-from-source|pages)\.yml$)'; then
+            echo "::error::this PR changes the shared Preview (site/, README.md, deploy-from-source.yml or pages.yml)"
+            exit 1
+          fi
