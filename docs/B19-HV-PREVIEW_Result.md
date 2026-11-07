@@ -1,6 +1,6 @@
 # B19 iPhone Safari HV page — Result Report (perusonao/teto-pizza-game#783 / #774)
 
-> Updated for the PR #2 review findings (§7): the fixes are in THIS stacked PR (#6), because this session may push only to its own branch, not to PR #2's.
+> Updated for the PR #2 review findings (§7). **Integrated into PR #2's branch** on the Owner's instruction (2026-11-07): `claude/pr-scoped-preview-pages` was fast-forwarded to this branch's head, so PR #2 now contains everything of PR #6 (PR #6 then has no diff of its own). See §9 for the PR relationships and §10 for the Final Gate.
 
 Status: **prepared, NOT published.** Nothing was merged, no workflow was run, the shared Preview (`site/`), Production and PR #2 are untouched.
 
@@ -19,7 +19,7 @@ a PR on `main` would repeat PR #2's 15 files. Stacked, the diff is only the add-
 ## 3. Final Gate results (local; no CI exists for this repo's PRs)
 | Gate | Result |
 |---|---|
-| Offline tests `bash tests/pr-pages.test.sh` | 131 passed / 0 failed (19 for `source_sha`, 3 for remove, 27 for the PR #2 findings: other documents / workers / whole-tree sync / CSP) |
+| Offline tests `bash tests/pr-pages.test.sh` | 135 passed / 0 failed (19 for `source_sha`, 3 for remove, 27 for the PR #2 findings: other documents / workers / whole-tree sync / CSP, 4 for the two protections taken over from PR #5: a concurrent `site/` change during publish, and `<iframe>` / `<base>` in index.html) |
 | `source_sha` against real data (read-only GitHub API) | `abb3da5a...8137dc3b`: ahead 5, behind 0, 9 files, all under `docs/` or `src/preview/` → `OK: deploy pr-783-8137dc3`; a wrong `confirm` is refused |
 | Build of `8137dc3b` at the PR base path + `patch-build.sh` | passes: 4 storage keys renamed `--pr-783-8137dc3`, no production/shared-root reference, no Firebase, CSP added, manifest `start_url`/`scope` = the page path |
 | Real browser (Chromium 390×844), shared Preview root and the page on ONE origin, `tests/pr-page-runtime.mjs` with `HV=b19-pesto-burrata`, `HV=b19-crudaiola`, `HV=normal` | all checks pass in all three: production key and shared Preview save/opt-ins unchanged, the page writes only its own keys, no re-seed on reload, cross-origin fetch/XHR blocked by CSP, no external request, shared-root badge unchanged, page badge `PREVIEW · PR#783 · 8137dc3`, Shop shows `burrata` as NEW |
@@ -60,3 +60,23 @@ Residual risk after these fixes: `navigator.sendBeacon` and top-level navigation
 - **#2** (base, perusonao's PR; 4 unresolved Codex threads: #1–#3 above are fixed only in #6, #4 is an accepted risk) → **#6** (stacked on #2: `source_sha` + the fixes above) → retarget #6 to `main`.
 - Order for the Owner: (1) decide on #4 (accept, or move to a separate origin); (2) merge #2, then #6 — or fold #6's commits into #2's branch and merge once; (3) only then run the publish workflow. The PR #2 threads #1–#3 will still show as unresolved on #2 until its branch contains these commits; they cannot be resolved from #6.
 - #6 touches only workflow/scripts/tests/docs (no `site/`); merging it before #2 is impossible (its base is #2's branch); merge-tree of #6 with `main` is clean.
+
+## 9. PR #2 / #5 / #6 (and #3): duplicates, dependencies, merge order
+| PR | What it is | Relationship | Action for the Owner |
+|---|---|---|---|
+| **#2** | PR-scoped pages (`pr/<slug>/`) — the base design. Its branch now ALSO carries #6's commits (fast-forward) | **The one to merge** | Merge #2 (a normal merge; it contains everything below) |
+| **#6** | `source_sha` add-on + fixes for #2's Codex findings, stacked on #2 | Its commits are now inside #2's branch, so #6 has **no diff left** | Do NOT merge; **close as superseded** after #2 is merged (merging it would be a no-op, not a double merge, but close it to keep the list clean) |
+| **#5** | Another session's parallel implementation: #2 + a *fixed-SHA* exception for `8137dc3b` + its own copy of the same Worker / frame / document / whole-site sync fixes | **Duplicate design**; conflicts with #2/#6 in `lib.sh`, `validate-inputs.sh`, `patch-build.sh`, the tests and docs. Owner chose #6's `source_sha` fixes (GO) | **Do NOT merge; close as superseded.** Its two protections that #6 lacked were taken over here (a `site/`-tree check during the publish retry, and refusing `<iframe>/<object>/<embed>/<base>/<form>` in `index.html`), with tests |
+| #3 | Cloudflare Pages alternative (Phase 1B) | Not adopted; unrelated to this route | Leave / close at the Owner's discretion |
+Merge exactly one PR (#2). Merging #5 as well would conflict and would bring a second, different B19 mechanism.
+
+## 10. Final Gate (integrated head)
+- **Offline tests:** `bash tests/pr-pages.test.sh` → 135 passed / 0 failed (see §3).
+- **`site/` == `main`:** `git diff origin/main HEAD -- site` is empty (two-dot) after merging `main` (`4a66b3c`) into the branch; no workflow other than `pages.yml` (site + optional `pr/`) and `pr-page.yml` is changed.
+- **Real browser (390×844):** unchanged code paths since the last full run on `b19-pesto-burrata`, `b19-crudaiola` and `normal` (all checks passed, worker / Service Worker / frame blocked, control starts, negative checks fail as they should); not re-run for the two small scripts added here, which the offline tests cover.
+- **CI:** this repository has **no CI** that runs on pull requests (0 check runs; Actions here are manual `workflow_dispatch` plus `pages.yml` on `main`). The offline tests above are the only automated gate and are run by hand. **No Actions run has ever executed `pr-page.yml` with `source_sha`**; the first dispatch is the first end-to-end run.
+- **Codex:** see the PR #2 conversation for the review of the integrated head.
+- **Unresolved PR #2 threads:** the three fixed ones (CSP only on `index.html`, workers outside the CSP, `index.html`-only sync check) are verified by code and tests and resolved with evidence; the fourth (same origin) stays **open as an accepted risk**.
+
+## 11. Same-origin limit — conditional acceptance (scope)
+The Owner accepted the same-origin risk **only for this limited Batch 19 HV** (instruction of 2026-11-07, relayed in the session; it is not yet written on GitHub — please record it on #2/#783). It does **not** cover other PRs or authors, other `source_sha`s, or leaving the page published: remove it (§4.3) when the check is done. The page runs on `perusonao.github.io`, the same origin as Production and the shared Preview; CSP cannot protect same-origin storage; key renaming only prevents accidents; `sendBeacon` and navigation are not blocked. Use a **Safari Private tab** if you want a belt-and-braces separation of storage (a private tab has its own storage, so the Production / shared Preview saves cannot be touched even by mistake).

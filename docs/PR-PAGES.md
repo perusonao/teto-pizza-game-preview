@@ -125,7 +125,7 @@ be previewed, do not use this workflow for them.
 - **Shared Preview already published**: before anything is pushed, `check-root-synced.sh` requires **every tracked file of `site/`** (index.html,
   manifest.webmanifest, icons, assets/) and the root URL to be **byte-identical live**. `pages.yml` deploys all of `main`, so without this a dispatch
   could also publish a pending shared-Preview update -- including one that changes only the manifest, an icon or an unreferenced asset (Codex P2 on PR #2).
-  It runs again after the publish. Files that exist only live cannot be listed over HTTP; they can only come from a deployed `main`, which is not changed.
+  It runs again after the publish, and `push.sh` refuses to push if the `site/` tree on `main` changed between the preflight and the push (a shared-Preview update landed meanwhile). Files that exist only live cannot be listed over HTTP; they can only come from a deployed `main`, which is not changed.
 - **Concurrency**: same group as `deploy-from-source.yml` (`cancel-in-progress: false`): never concurrently
   with a shared-Preview deploy or another PR-page job. GitHub keeps one queued run per group; a third
   dispatch replaces the queued one, so wait for a run to finish before dispatching again.

@@ -96,10 +96,18 @@ expect_ok "push.sh commits + pushes" bash "$S/push.sh" $SLUG "PR page deploy: $S
 jq -e --arg sha "$SHA" '.sha==$sha and .pr=="494"' pr/$SLUG/preview-meta.json >/dev/null && ok "preview-meta.json records PR + sha" || bad "meta"
 
 echo "  -- concurrent push: another job pushed first (non-overlapping path)"
-git clone -q "$T/remote.git" "$T/other" && ( cd "$T/other" && git config user.email o@o && git config user.name o && echo n > site/new.txt && git add -A && git commit -qm other && git push -q origin main )
+git clone -q "$T/remote.git" "$T/other" && ( cd "$T/other" && git config user.email o@o && git config user.name o && echo n > docs-other.txt && git add -A && git commit -qm other && git push -q origin main )
 echo changed >> "$T/dist/index.html"; ( export PR_NUMBER=494 SHA=$SHA RUN_ID=2; bash "$S/apply.sh" deploy $SLUG "$T/dist" >/dev/null )
 expect_ok "push.sh rebases onto the concurrent push and re-guards" bash "$S/push.sh" $SLUG "redeploy"
-git --git-dir="$T/remote.git" show main:site/new.txt >/dev/null 2>&1 && ok "concurrent change preserved" || bad "concurrent change lost"
+git --git-dir="$T/remote.git" show main:docs-other.txt >/dev/null 2>&1 && ok "concurrent (non-site) change preserved" || bad "concurrent change lost"
+
+echo "  -- concurrent push that changes the shared site/ (PR #5 idea): refused, nothing published"
+( cd "$T/other" && git pull -q origin main && echo n > site/landed.txt && git add -A && git commit -qm "site landed" && git push -q origin main )
+echo changed2 >> "$T/dist/index.html"; ( export PR_NUMBER=494 SHA=$SHA RUN_ID=21; bash "$S/apply.sh" deploy $SLUG "$T/dist" >/dev/null )
+REMOTE_BEFORE="$(git --git-dir="$T/remote.git" rev-parse main)"
+expect_fail "push.sh refuses when site/ changed on main between the preflight and the push" bash "$S/push.sh" $SLUG "redeploy 2"
+[[ "$(git --git-dir="$T/remote.git" rev-parse main)" == "$REMOTE_BEFORE" ]] && ok "remote main untouched by the refused publish" || bad "remote main moved"
+git reset -q --hard origin/main 2>/dev/null; git fetch -q origin; git reset -q --hard origin/main; git clean -fdq
 
 echo "  -- guard"
 echo hack > site/index.html; git add site/index.html
@@ -179,6 +187,8 @@ mk; sed -i 's#<meta charset="UTF-8" />#<meta charset="UTF-8" /><meta http-equiv=
 mk; bash "$S/patch-build.sh" "$T/d" $SLUG >/dev/null; expect_fail "patch: refuses to run twice on the same dist" bash "$S/patch-build.sh" "$T/d" $SLUG
 
 echo "patch-build: other documents, workers (Codex P1 x2 on PR #2)"
+mk; sed -i 's#</head>#<iframe src="x"></iframe></head>#' "$T/d/index.html"; expect_fail "patch: an <iframe> in index.html is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; sed -i 's#</head>#<base href="/x/"></head>#' "$T/d/index.html"; expect_fail "patch: a <base> in index.html is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; printf '<!doctype html><script src="x.js"></script>' > "$T/d/escape.html"; expect_fail "patch: a SECOND HTML document in dist is refused (it would run without the CSP)" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; mkdir -p "$T/d/sub"; printf '<!doctype html>' > "$T/d/sub/index.html"; expect_fail "patch: a nested index.html is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; printf '<svg xmlns="http://www.w3.org/2000/svg"><script>1</script></svg>' > "$T/d/assets/x.svg"; expect_fail "patch: an SVG document is refused (scripts run when it is framed or opened)" bash "$S/patch-build.sh" "$T/d" $SLUG

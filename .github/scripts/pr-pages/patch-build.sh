@@ -62,6 +62,9 @@ if bad:
     sys.exit(1)
 PY
 
+# 2d) index.html itself may not embed another context or rebase its URLs: no frame / object / embed / base / form element (belt and braces next to the CSP).
+if grep -qiE '<(iframe|frame|frameset|object|embed|base|form)[ >/]' "$dist/index.html"; then die "index.html embeds a frame / object / embed / base / form element"; fi
+
 # 3) Separate localStorage. All of github.io shares ONE origin, so the shared Preview, production and this
 #    page would otherwise share every key. Each storage key is a string literal in the bundle; the script
 #    renames EVERY teto-/teto. literal to "<key>--<slug>" and FAILS on a literal it does not know, so a key
