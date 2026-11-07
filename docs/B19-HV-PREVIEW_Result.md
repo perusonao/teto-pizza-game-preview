@@ -76,7 +76,7 @@ Codex P2: the CSP `<meta>` was inserted after the `charset` anchor, so a script 
 ## 10. Final Gate (integrated head)
 - **Offline tests:** `bash tests/pr-pages.test.sh` → 143 passed / 0 failed (see §3).
 - **`site/` == `main`:** `git diff origin/main HEAD -- site` is empty (two-dot) after merging `main` (`4a66b3c`) into the branch; no workflow other than `pages.yml` (site + optional `pr/`) and `pr-page.yml` is changed.
-- **Real browser (390×844):** unchanged code paths since the last full run on `b19-pesto-burrata`, `b19-crudaiola` and `normal` (all checks passed, worker / Service Worker / frame blocked, control starts, negative checks fail as they should); re-run in full after the CSP-placement fix (§9b) on a fresh build of `8137dc3b`: all passed.
+- **Real browser (390×844):** all checks passed on `b19-pesto-burrata`, `b19-crudaiola` and `normal` (worker / Service Worker / frame blocked, control starts, negative checks fail as they should); re-run in full after the CSP-placement fix (§9b) on a fresh build of `8137dc3b`: all passed.
 - **CI:** this repository has **no CI** that runs on pull requests (0 check runs; Actions here are manual `workflow_dispatch` plus `pages.yml` on `main`). The offline tests above are the only automated gate and are run by hand. **No Actions run has ever executed `pr-page.yml` with `source_sha`**; the first dispatch is the first end-to-end run.
 - **Codex:** see the PR #2 conversation for the review of the integrated head.
 - **Unresolved PR #2 threads:** the three fixed ones (CSP only on `index.html`, workers outside the CSP, `index.html`-only sync check) are verified by code and tests and resolved with evidence; the fourth (same origin) stays **open as an accepted risk**.
