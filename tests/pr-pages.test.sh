@@ -212,6 +212,14 @@ for tag in svg math template noscript xmp plaintext textarea noembed noframes st
 done
 mk; printf '<!doctype html><html><head><meta charset="UTF-8" /><script>alert(1)</script></head></html>' > "$T/d/index.html"; expect_fail "patch: an inline <script> is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; printf '<!doctype html><html><head><meta charset="UTF-8" /><title>t</title></head><body><div id="root"></div></body></html>' > "$T/d/index.html"; expect_ok "patch: a typical Vite shell (meta, title, div#root) passes" bash "$S/patch-build.sh" "$T/d" $SLUG
+echo "patch-build: the shell's STRUCTURE, not only its tag names (Codex P2 on PR #2, round 6)"
+mk; printf '<!doctype html><html><div></div><head><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_fail "patch (Codex r6 fixture): body content (<div>) BEFORE the explicit <head> is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html>hello<head><meta charset="UTF-8" /></head>' > "$T/d/index.html"; expect_fail "patch: text before <head> (an implicit head) is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><div></div><html><head><meta charset="UTF-8" /></head></html>' > "$T/d/index.html"; expect_fail "patch: a <div> before <html> is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><meta charset="UTF-8" /><head></head></html>' > "$T/d/index.html"; expect_fail "patch: a <meta> before the explicit <head> is refused (the head would be implicit)" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html><html><html><head><meta charset="UTF-8" /></head></html></html>' > "$T/d/index.html"; expect_fail "patch: two <html> tags are refused" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<!doctype html>\n<html lang="ja">\n  <head>\n    <meta charset="UTF-8" />\n  </head>\n  <body><div id="root"></div></body>\n</html>\n' > "$T/d/index.html"; expect_ok "patch: the real Vite layout (doctype, html lang, whitespace, head, body) passes" bash "$S/patch-build.sh" "$T/d" $SLUG
+mk; printf '<head><meta charset="UTF-8" /></head><body></body>' > "$T/d/index.html"; expect_ok "patch: a document that starts directly with <head> passes" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; sed -i 's#<head>##' "$T/d/index.html"; expect_fail "patch: an index.html without a <head> tag is refused" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; sed -i 's#<head>#<head><head>#' "$T/d/index.html"; expect_fail "patch: two <head> tags are refused" bash "$S/patch-build.sh" "$T/d" $SLUG
 mk; sed -i 's#<meta charset="UTF-8" />#<meta charset="UTF-8" /><meta http-equiv="refresh" content="0;url=/x">#' "$T/d/index.html"; expect_ok "patch: (a refresh meta AFTER the CSP is not before it)" bash "$S/patch-build.sh" "$T/d" $SLUG

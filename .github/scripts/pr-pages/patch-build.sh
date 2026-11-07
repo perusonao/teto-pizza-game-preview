@@ -55,6 +55,7 @@ class Scan(HTMLParser):
         for m in re.finditer("\n", text):
             self.starts.append(m.end())
         self.tags = []
+        self.text_at = []
 
     def handle_starttag(self, tag, attrs):
         line, col = self.getpos()
@@ -68,8 +69,12 @@ class Scan(HTMLParser):
         # text directly inside a <script> element (html.parser treats script / style bodies as raw data) = inline script
         if self.tags and self.tags[-1][0] == "script" and data.strip():
             self.inline_script = True
+        if data.strip():
+            line, col = self.getpos()
+            self.text_at.append(self.starts[line - 1] + col)
 
     inline_script = False
+    text_at = None
 
 
 def scan(text):
@@ -78,7 +83,7 @@ def scan(text):
     sc.close()
     if sc.inline_script:
         fail("a <script> element in index.html has inline content: refused")
-    return sc.tags
+    return sc.tags, sc.text_at
 
 
 def risky(tag, attrs):
@@ -94,7 +99,7 @@ if re.search(r"<!(?!doctype\b)", html, flags=re.I) or "<?" in html:
 if "\x00" in html:
     fail("index.html contains a NUL character")
 ALLOWED_TAGS = {"html", "head", "meta", "link", "title", "script", "body", "div"}
-tags = scan(html)
+tags, text_at = scan(html)
 odd = [t[0] for t in tags if t[0] not in ALLOWED_TAGS]
 if odd:
     fail(f"index.html uses <{odd[0]}>, outside the tags of a Vite shell ({', '.join(sorted(ALLOWED_TAGS))}): refused")
@@ -104,13 +109,23 @@ heads = [t for t in tags if t[0] == "head"]
 if len(heads) != 1:
     fail(f"expected exactly one explicit <head> start tag, found {len(heads)} (comments and raw text are not counted)")
 head_at, head_end = heads[0][2], heads[0][3]
+# STRUCTURE (Codex P2, round 6): a browser builds the head IMPLICITLY as soon as anything but <html> / whitespace / the doctype / a comment comes first, and then IGNORES a later explicit
+# <head>, which would leave the CSP meta in the body where it has no effect. So the document must be: [doctype] [<html>] <head> ... with nothing else before the <head> tag.
+names = [t[0] for t in tags]
+if names.count("html") > 1:
+    fail("index.html has more than one <html> start tag")
+lead = 1 if names and names[0] == "html" else 0
+if len(names) <= lead or names[lead] != "head":
+    fail(f"index.html must start with [<html>] <head>, but <{names[lead] if len(names) > lead else '(nothing)'}> comes first: a browser would build the head implicitly and ignore the later <head>")
+if any(at < head_at for at in text_at):
+    fail("index.html has text before <head>: a browser would build the head implicitly and ignore the later <head>")
 ahead = [t for t in tags if t[2] < head_at and risky(t[0], t[1])]
 if ahead:
     fail(f"executable / loading content (<{ahead[0][0]}>) starts before <head>, i.e. before the CSP can apply")
 meta = f'\n    <meta http-equiv="Content-Security-Policy" content="{csp}" />'
 patched = html[:head_end] + meta + html[head_end:]
 # verify with a second parse of the PATCHED document
-ptags = scan(patched)
+ptags, _ = scan(patched)
 ph = [t for t in ptags if t[0] == "head"]
 if len(ph) != 1:
     fail("after patching, the document no longer has exactly one <head> start tag")
@@ -120,6 +135,8 @@ if not first or first[0] != "meta" or first[1].get("http-equiv", "").lower() != 
     fail("after patching, the CSP meta is not the first element of the real <head>")
 if any(t[2] < first[2] and risky(t[0], t[1]) for t in ptags):
     fail("after patching, loading / executable content still precedes the CSP")
+if any(t[2] < first[2] and t[0] not in ("html", "head") for t in ptags):
+    fail("after patching, something other than <html> / <head> still precedes the CSP meta")
 cs = re.search(r"<meta\s+charset\s*=", patched, flags=re.I)
 if not cs or cs.start() > 1024:
     fail("the charset declaration is missing or beyond the first 1024 bytes after inserting the CSP")
