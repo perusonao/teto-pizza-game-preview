@@ -83,8 +83,8 @@ What this design does about it:
   document is governed by the creating page's `<meta>` policy, so each could read the shared origin's storage and send it out. Therefore the CSP says
   `worker-src 'none'; frame-src 'none'; child-src 'none'`, `patch-build.sh` fails the build on any file type outside a short allow-list (so no other
   HTML / SVG / XML document, no `.wasm`, nothing unknown) and on a bundle that constructs a `Worker` / `SharedWorker`, registers a service worker or
-  calls `importScripts`, and `tests/pr-page-runtime.mjs` proves in a real browser that a worker, a blob worker, a service-worker registration and a
-  frame are all blocked. (This closes the two Codex P1 findings on PR #2; it narrows the surface, it does not make the origin a sandbox.)
+  calls `importScripts`, and `tests/pr-page-runtime.mjs` proves in a real browser (with real fixture scripts, a CSP-less control page, and `SERVE_ROOT`)
+  that a worker, a blob worker, a service-worker registration and a frame are all blocked. (This closes the two Codex P1 findings on PR #2; it narrows the surface, it does not make the origin a sandbox.)
 - the page ships with no Firebase config (build job has no secrets), so the app never initialises Firebase.
 
 A truly isolated origin (a separate account/org Pages site or a custom domain) is the only complete answer. That

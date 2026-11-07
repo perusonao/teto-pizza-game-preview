@@ -1,6 +1,7 @@
 // Runtime check of a PATCHED PR page next to the shared Preview, in one browser origin.
 //   ORIGIN=http://127.0.0.1:8765 SLUG=pr-494-a3d1872 PLAYWRIGHT=/path/to/playwright-core/index.mjs \
 //     node tests/pr-page-runtime.mjs
+// SERVE_ROOT=<dir that ORIGIN serves as "/"> is REQUIRED (the worker / service-worker probes write real fixture scripts next to the page).
 // Optional: HV=<scenario> (default "normal"; e.g. b19-pesto-burrata), PR_NUMBER (default 494), SHA7 (default a3d1872) -- the page the
 // slug names, so a source_sha add-on page (slug pr-<N>-<source sha7>) is checked against ITS badge.
 // Serve a tree where /teto-pizza-game-preview/ is the assembled Pages root (site/ + pr/<slug>/).
@@ -145,29 +146,50 @@ const { beacon, ...asserted } = probes;
 console.log(`      known gap (documented): navigator.sendBeacon -> ${beacon}`);
 check("fetch / XHR to Firestore, the production origin or any other origin is blocked by the browser", Object.values(asserted).every((v) => v === "blocked"), JSON.stringify(asserted));
 check("the blocks were reported as CSP connect-src violations", violations.filter((v) => v.startsWith("connect-src")).length >= 3, violations.join(" | "));
-// 4d) Codex P1 x2 on PR #2: a Worker (a Service Worker included) and a framed same-origin document are NOT governed by this page's <meta> CSP, so the page may create neither.
+// 4d) Codex P1 x2 on PR #2 (+ P2 on the probe itself): a Worker (a Service Worker included) and a framed same-origin document are NOT governed by this page's <meta>
+//     CSP, so the page may create neither. The probes use REAL, working same-origin scripts (so a 404 can never pass for "blocked") and a control from a page WITHOUT the
+//     CSP (the shared Preview root) proves the very same script URLs do start when nothing forbids them. SERVE_ROOT = the directory that ORIGIN serves as "/" (the fixtures
+//     are written next to the page; they are not part of any build).
 {
-  const before = violations.length;
-  const wp = await page.evaluate(async () => {
+  const fs = await import("node:fs");
+  const SERVE_ROOT = process.env.SERVE_ROOT;
+  check("SERVE_ROOT is set (the worker / service-worker probes need real fixture scripts)", !!SERVE_ROOT && fs.existsSync(`${SERVE_ROOT}${PAGE}index.html`), String(SERVE_ROOT));
+  const WORKER_URL = `${PAGE}__probe-worker.js`, SW_URL = `${PAGE}__probe-sw.js`;
+  if (SERVE_ROOT) {
+    fs.writeFileSync(`${SERVE_ROOT}${WORKER_URL}`, 'postMessage("up");\n');
+    fs.writeFileSync(`${SERVE_ROOT}${SW_URL}`, 'self.addEventListener("install", () => self.skipWaiting());\n');
+  }
+  // one function for the page and the control: resolves "started" only if the worker really ran and posted, "blocked" on an error event
+  const probes = async ([workerUrl, swUrl]) => {
     const out = {};
-    // Chromium does not throw from the constructor: the blocked script fires `error` on the Worker object. A worker that really started would post a message.
     const probe = (mk) => new Promise((res) => {
-      try { const w = mk(); w.onerror = () => res("blocked"); w.onmessage = () => res("created"); setTimeout(() => res("not-blocked"), 1200); } catch { res("blocked"); }
+      try { const w = mk(); w.onerror = () => res("blocked"); w.onmessage = (e) => res(e.data === "up" ? "started" : "message?"); setTimeout(() => res("no-signal"), 1500); } catch { res("blocked"); }
     });
-    out.worker = await probe(() => new Worker(location.pathname + "assets/none.js"));
-    out.blobWorker = await probe(() => new Worker(URL.createObjectURL(new Blob(["postMessage(1)"]))));
-    try { await navigator.serviceWorker.register(location.pathname + "sw.js"); out.sw = "registered"; } catch { out.sw = "blocked"; }
-    const f = document.createElement("iframe"); f.src = location.pathname; document.body.appendChild(f);
-    await new Promise((r) => setTimeout(r, 800));
-    out.iframe = "attempted";
+    out.worker = await probe(() => new Worker(workerUrl));
+    out.blobWorker = await probe(() => new Worker(URL.createObjectURL(new Blob(['postMessage("up")']))));
+    try { await navigator.serviceWorker.register(swUrl, { scope: new URL(".", swUrl).pathname }); out.sw = "registered"; } catch { out.sw = "blocked"; }
     return out;
-  });
-  const fresh = violations.slice(before).map((v) => v.split(" ")[0]);
-  check("a Worker and a blob: Worker cannot be created from the page", wp.worker === "blocked" && wp.blobWorker === "blocked", JSON.stringify(wp));
-  check("a Service Worker cannot be registered from the page", wp.sw === "blocked", JSON.stringify(wp));
-  check("the browser reported worker-src and frame-src CSP violations", fresh.includes("worker-src") && fresh.includes("frame-src"), fresh.join(","));
+  };
+  // control: the shared Preview root has no CSP, so the fixtures must start there
+  const ctl = await ctx.newPage();
+  await ctl.goto(ORIGIN + ROOT);
+  const control = await ctl.evaluate(probes, [`${ORIGIN}${WORKER_URL}`, `${ORIGIN}${SW_URL}`]).catch((e) => ({ error: String(e) }));
+  await ctl.evaluate(async () => { for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister(); }).catch(() => {});
+  await ctl.close();
+  check("control: the real fixture Worker, a blob Worker and the fixture Service Worker DO start on a page without the CSP (the probe can tell)", control.worker === "started" && control.blobWorker === "started" && control.sw === "registered", JSON.stringify(control));
+
+  const before = violations.length;
+  const wp = await page.evaluate(probes, [`${ORIGIN}${WORKER_URL}`, `${ORIGIN}${SW_URL}`]);
+  await page.evaluate(() => { const f = document.createElement("iframe"); f.src = location.pathname; document.body.appendChild(f); });
+  await page.waitForTimeout(800);
+  const fresh = violations.slice(before);
+  const kinds = fresh.map((v) => v.split(" ")[0]);
+  check("the page cannot start a real same-origin Worker, nor a blob Worker", wp.worker === "blocked" && wp.blobWorker === "blocked", JSON.stringify(wp));
+  check("the page cannot register a real same-origin Service Worker", wp.sw === "blocked", JSON.stringify(wp));
+  check("the browser reported a worker-src violation FOR the real fixture script and a frame-src violation", fresh.some((v) => v.startsWith("worker-src") && v.includes("__probe-worker.js")) && kinds.includes("frame-src"), fresh.join(" | "));
   const sws = await page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length);
   check("no Service Worker registration exists for this origin after the probe", sws === 0, String(sws));
+  if (SERVE_ROOT) { fs.rmSync(`${SERVE_ROOT}${WORKER_URL}`, { force: true }); fs.rmSync(`${SERVE_ROOT}${SW_URL}`, { force: true }); }
 }
 violations.length = 0;
 
