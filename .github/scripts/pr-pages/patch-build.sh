@@ -55,7 +55,6 @@ class Scan(HTMLParser):
         for m in re.finditer("\n", text):
             self.starts.append(m.end())
         self.tags = []
-        self.text_at = []
 
     def handle_starttag(self, tag, attrs):
         line, col = self.getpos()
@@ -69,12 +68,8 @@ class Scan(HTMLParser):
         # text directly inside a <script> element (html.parser treats script / style bodies as raw data) = inline script
         if self.tags and self.tags[-1][0] == "script" and data.strip():
             self.inline_script = True
-        if data.strip():
-            line, col = self.getpos()
-            self.text_at.append(self.starts[line - 1] + col)
 
     inline_script = False
-    text_at = None
 
 
 def scan(text):
@@ -83,7 +78,7 @@ def scan(text):
     sc.close()
     if sc.inline_script:
         fail("a <script> element in index.html has inline content: refused")
-    return sc.tags, sc.text_at
+    return sc.tags
 
 
 def risky(tag, attrs):
@@ -99,7 +94,7 @@ if re.search(r"<!(?!doctype\b)", html, flags=re.I) or "<?" in html:
 if "\x00" in html:
     fail("index.html contains a NUL character")
 ALLOWED_TAGS = {"html", "head", "meta", "link", "title", "script", "body", "div"}
-tags, text_at = scan(html)
+tags = scan(html)
 odd = [t[0] for t in tags if t[0] not in ALLOWED_TAGS]
 if odd:
     fail(f"index.html uses <{odd[0]}>, outside the tags of a Vite shell ({', '.join(sorted(ALLOWED_TAGS))}): refused")
@@ -117,15 +112,22 @@ if names.count("html") > 1:
 lead = 1 if names and names[0] == "html" else 0
 if len(names) <= lead or names[lead] != "head":
     fail(f"index.html must start with [<html>] <head>, but <{names[lead] if len(names) > lead else '(nothing)'}> comes first: a browser would build the head implicitly and ignore the later <head>")
-if any(at < head_at for at in text_at):
-    fail("index.html has text before <head>: a browser would build the head implicitly and ignore the later <head>")
+# LEXICAL check of everything in front of the <head> tag (no parser callback is trusted here: character references like &#65; / &nbsp; never reach handle_data, and Python's
+# str.strip() treats U+00A0, U+0085, ... as whitespace while HTML does not -- Codex P2, round 7): remove the leading doctype and the <html> start tag; what is left must be made
+# only of the five HTML whitespace characters (space, tab, LF, FF, CR). A BOM, a character reference, an NBSP, a stray word or any other tag fails.
+prefix = html[:head_at]
+if tags and tags[0][0] == "html":
+    prefix = prefix[: tags[0][2]] + prefix[tags[0][3]:]
+prefix = re.sub(r"^[ \t\n\f\r]*<!doctype\b[^>]*>", "", prefix, count=1, flags=re.I)
+if prefix.strip(" \t\n\f\r") != "":
+    fail("index.html has something other than the doctype, <html> and HTML whitespace before <head> (text, a character reference, a BOM or an NBSP): a browser would build the head implicitly and ignore the later <head>")
 ahead = [t for t in tags if t[2] < head_at and risky(t[0], t[1])]
 if ahead:
     fail(f"executable / loading content (<{ahead[0][0]}>) starts before <head>, i.e. before the CSP can apply")
 meta = f'\n    <meta http-equiv="Content-Security-Policy" content="{csp}" />'
 patched = html[:head_end] + meta + html[head_end:]
 # verify with a second parse of the PATCHED document
-ptags, _ = scan(patched)
+ptags = scan(patched)
 ph = [t for t in ptags if t[0] == "head"]
 if len(ph) != 1:
     fail("after patching, the document no longer has exactly one <head> start tag")
