@@ -35,5 +35,7 @@ case "$action" in
   *) die "unknown action" ;;
 esac
 
-git add -A -- "$PR_PAGES_DIR"
+# Removing the LAST page also deletes the now-empty pr/ directory, and `git add -A -- pr` then fails ("pathspec 'pr' did not match any files",
+# run 42403809324). The removal itself is already staged by `git rm` above; deploy always creates the directory. So only add when it exists.
+if [[ -e "$PR_PAGES_DIR" ]]; then git add -A -- "$PR_PAGES_DIR"; fi
 bash "$(dirname "$0")/guard-paths.sh" "$slug"

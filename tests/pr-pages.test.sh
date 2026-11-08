@@ -6,6 +6,15 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 S="$ROOT/.github/scripts/pr-pages"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 pass=0; fail=0
+# SAFETY: the sections below commit, reset --hard and PUSH. They must only ever do that inside the temp dir $T. Calling this before them aborts (exit 99)
+# instead of touching the repository the tests are run from (a wrong cwd once pushed two test commits to this repo's real origin/main).
+# It checks BOTH the cwd and the git repository the cwd belongs to: a failed `git init` / `cd` must never fall through to an enclosing real clone
+# (e.g. TMPDIR set inside the checkout), so the toplevel has to be a repo created under $T.
+guard_tmp() {
+  case "$PWD" in "$T"/*) ;; *) echo "REFUSING to continue: cwd '$PWD' is outside the temp dir '$T'" >&2; exit 99;; esac
+  local top; top="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "REFUSING to continue: '$PWD' is not inside a git repository" >&2; exit 99; }
+  case "$top" in "$T"/*) ;; *) echo "REFUSING to continue: git toplevel '$top' is outside the temp dir '$T'" >&2; exit 99;; esac
+}
 ok()   { pass=$((pass+1)); echo "  ok   - $1"; }
 bad()  { fail=$((fail+1)); echo "  FAIL - $1"; }
 expect_ok()   { local n="$1"; shift; if "$@" >"$T/out" 2>&1; then ok "$n"; else bad "$n"; sed 's/^/        /' "$T/out"; fi; }
@@ -79,7 +88,7 @@ expect_fail "remove: confirm still required"       v remove 494 "$SHA" nope
 
 echo "apply / guard / push (temp repo with a bare remote)"
 git init -q --bare -b main "$T/remote.git"
-git init -q -b main "$T/w" && cd "$T/w"
+git init -q -b main "$T/w" || exit 99; cd "$T/w" || exit 99; guard_tmp
 git config user.email t@t; git config user.name t
 mkdir -p site/assets .github/workflows pr/pr-1-aaaaaaa; echo ROOT > site/index.html; echo a > site/assets/a.js
 echo wf > .github/workflows/x.yml; echo OLD > pr/pr-1-aaaaaaa/index.html; echo r > README.md
@@ -130,6 +139,7 @@ expect_fail "apply refuses a 6th PR page" env PR_NUMBER=494 SHA=$SHA bash "$S/ap
 git reset -q --hard HEAD; git clean -fdq; git reset -q --hard origin/main
 
 echo "  -- remove"
+guard_tmp
 git pull -q origin main
 B2="$(tree_outside $SLUG)"
 expect_ok "remove stages only the target" bash "$S/apply.sh" remove $SLUG
@@ -139,7 +149,39 @@ expect_ok "push.sh commits removal" bash "$S/push.sh" $SLUG "PR page remove: $SL
 expect_fail "remove of a missing page fails loudly" bash "$S/apply.sh" remove $SLUG
 [[ -d pr/pr-1-aaaaaaa ]] && ok "other PR page survives" || bad "other PR page lost"
 
+echo "  -- remove the LAST page (pr/ disappears: run 42403809324), several pages, a missing page; site/ and README unchanged"
+cd "$T" || exit 99; rm -rf w2 remote2.git
+git init -q --bare -b main remote2.git || exit 99; git init -q -b main w2 || exit 99; cd w2 || exit 99; guard_tmp
+git config user.email t@t; git config user.name t
+mkdir -p site/assets pr/pr-9-ccccccc/assets .github; echo ROOT > site/index.html; echo a > site/assets/a.js; echo manifest > site/manifest.webmanifest
+echo readme > README.md; echo wf > .github/x.yml; echo P > pr/pr-9-ccccccc/index.html; echo j > pr/pr-9-ccccccc/assets/i.js
+git add -A; git commit -qm init; git remote add origin "$T/remote2.git"; git push -q origin main
+LAST=pr-9-ccccccc
+SITE_H="$(git ls-files -s site README.md .github | sha256sum)"; SITE_FILES="$(sha256sum site/index.html site/assets/a.js site/manifest.webmanifest README.md | sha256sum)"
+expect_ok   "remove: the ONLY page (pr/ ends up gone) succeeds" bash "$S/apply.sh" remove $LAST
+[[ ! -e pr ]] && ok "remove: pr/ is gone with its last page" || bad "pr/ still exists"
+git diff --cached --name-only | grep -qv "^pr/$LAST/" && bad "staged path outside the page" || ok "remove: every staged path is under pr/$LAST/"
+[[ "$(git diff --cached --name-status | grep -vc '^D')" == "0" ]] && ok "remove: only deletions are staged" || bad "non-deletion staged"
+expect_ok   "remove: push.sh commits + pushes the removal of the last page" bash "$S/push.sh" $LAST "PR page remove: $LAST"
+git --git-dir="$T/remote2.git" ls-tree -r --name-only main | grep -q '^pr/' && bad "pr/ files still on the remote" || ok "remove: nothing under pr/ on the remote main"
+[[ "$(git ls-files -s site README.md .github | sha256sum)" == "$SITE_H" ]] && ok "remove: site/, README.md, .github are unchanged in the index" || bad "site/README changed in the index"
+[[ "$(sha256sum site/index.html site/assets/a.js site/manifest.webmanifest README.md | sha256sum)" == "$SITE_FILES" ]] && ok "remove: site/ and README.md are byte-identical" || bad "site/README bytes changed"
+[[ -z "$(git diff --name-only HEAD~1 HEAD | grep -v "^pr/$LAST/")" ]] && ok "remove: the removal commit touches only pr/$LAST/" || bad "removal commit touches other paths"
+expect_fail "remove: a page that does not exist (no pr/ directory at all) fails loudly" bash "$S/apply.sh" remove $LAST
+mkdir -p pr/pr-8-ddddddd; echo x > pr/pr-8-ddddddd/index.html; git add -A; git commit -qm other
+expect_fail "remove: a page that does not exist (pr/ exists, other page present) fails loudly" bash "$S/apply.sh" remove pr-7-eeeeeee
+git diff --cached --quiet && ok "remove: the failed attempt staged nothing" || bad "failed remove left staged changes"
+# several pages: remove one, the others survive untouched
+mkdir -p pr/pr-7-eeeeeee; echo y > pr/pr-7-eeeeeee/index.html; git add -A; git commit -qm another
+OTHERS_BEFORE="$(find pr -type f ! -path 'pr/pr-7-eeeeeee/*' | sort | xargs sha256sum | sha256sum)"
+expect_ok   "remove: one of several pages succeeds" bash "$S/apply.sh" remove pr-7-eeeeeee
+[[ ! -e pr/pr-7-eeeeeee && -d pr/pr-8-ddddddd ]] && ok "remove: only the chosen page is gone, pr/ and the other page remain" || bad "wrong pages removed"
+[[ "$(find pr -type f | sort | xargs sha256sum | sha256sum)" == "$OTHERS_BEFORE" ]] && ok "remove: the other pages are byte-identical" || bad "other page changed"
+git reset -q --hard HEAD
+cd "$T/w" || exit 99; guard_tmp   # back to the repo the rollback cases below use (NOT $ROOT: they run `git reset --hard` there)
+
 echo "  -- rollback"
+guard_tmp
 ( export PR_NUMBER=494 SHA=$SHA RUN_ID=3; bash "$S/apply.sh" deploy $SLUG "$T/dist" >/dev/null ); bash "$S/push.sh" $SLUG "PR page deploy" >"$T/p.out"; P="$(grep '^sha=' "$T/p.out" | cut -d= -f2)"
 expect_ok "rollback reverts our commit when it is the tip" bash "$S/rollback.sh" $SLUG "$P"
 git --git-dir="$T/remote.git" ls-tree -r --name-only main | grep -q "^pr/$SLUG/" && bad "page still on main after rollback" || ok "page gone from main after rollback"
