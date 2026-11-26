@@ -196,12 +196,12 @@ mk() { rm -rf "$T/d"; mkdir -p "$T/d/assets"
   printf '{ "start_url": "/teto-pizza-game/", "scope": "/teto-pizza-game/" }' > "$T/d/manifest.webmanifest"
   printf '<!doctype html><html><head><meta charset="UTF-8" /><script src="/teto-pizza-game-preview/pr/%s/assets/i.js"></script></head></html>' $SLUG > "$T/d/index.html"
   cat > "$T/d/assets/i.js" <<JS
-const a=\`teto-pizza-preview-save-v1\`,b="teto-pizza-cheese-canvas",c='teto-pizza-preview-hint5-optin',d="teto.dev.researchIdentify",e="teto.dev.hint5Ladder";
+const a=\`teto-pizza-preview-save-v1\`,b="teto-pizza-cheese-canvas",c='teto-pizza-preview-hint5-optin',d="teto.dev.researchIdentify",e="teto.dev.hint5Ladder",f="teto-pizza-preview-progression-model";
 const base="/teto-pizza-game-preview/pr/$SLUG/";const lookalike="tetoXdevXresearchIdentify";const css="teto-card is-open";
 JS
 }
 mk; expect_ok "patch: all assertions pass on a good dist" bash "$S/patch-build.sh" "$T/d" $SLUG
-for k in teto-pizza-preview-save-v1 teto-pizza-cheese-canvas teto-pizza-preview-hint5-optin teto.dev.researchIdentify teto.dev.hint5Ladder; do
+for k in teto-pizza-preview-save-v1 teto-pizza-cheese-canvas teto-pizza-preview-hint5-optin teto.dev.researchIdentify teto.dev.hint5Ladder teto-pizza-preview-progression-model; do
   grep -qF "${k}--${SLUG}" "$T/d/assets/i.js" && ! grep -qE "[\"'\`]${k//./\\.}[\"'\`]" "$T/d/assets/i.js" && ok "key namespaced, bare literal gone: $k" || bad "key not namespaced: $k"
 done
 grep -q 'tetoXdevXresearchIdentify"' "$T/d/assets/i.js" && ok "unrelated look-alike string untouched" || bad "look-alike altered"
