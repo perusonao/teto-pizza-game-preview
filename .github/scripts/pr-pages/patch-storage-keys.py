@@ -21,6 +21,7 @@ KNOWN = {
     "teto-pizza-preview-save-v1",        # src/state/persistence.ts (Preview save)
     "teto-pizza-cheese-canvas",          # src/preview/cheeseRenderMode.ts (also exists in production builds)
     "teto-pizza-preview-hint5-optin",    # src/preview/hint5PreviewOptIn.ts
+    "teto-pizza-preview-progression-model",  # src/logic/progression/progressionPreviewOptIn.ts (B案 Phase 1a, PR #903)
     "teto.dev.hint5Ladder",              # src/logic/discovery/hint5Flag.ts (hand-set dev flag)
     "teto.dev.researchIdentify",         # src/logic/discovery/researchIdentifyFlag.ts (hand-set dev flag)
 }
